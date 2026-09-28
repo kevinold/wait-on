@@ -185,4 +185,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseArgv, optionDefs, parseHeaders };
+module.exports = { parseArgv, optionDefs, parseHeaders, parseInterval };
