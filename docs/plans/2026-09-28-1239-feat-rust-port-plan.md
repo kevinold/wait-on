@@ -16,8 +16,8 @@ execution: code
 - **Means:** one Rust core crate, consumed two ways from the same source — a napi-rs `.node` addon that is the existing npm package (prebuildify-bundled), and (later) a standalone binary.
 - **Product authority:** kevinold (fork owner, `kevinold/wait-on`). Upstream maintainer (Jeff Barczewski) was consulted and endorses the napi-rs + prebuildify direction, which matters for eventual upstreaming to `jeffbski/wait-on`.
 - **Open blockers:**
-  - Scheduled into the **11.x line — after everything else ships** (the current 9.x/10.x trains and the in-flight backlog). This is future work with no rush; the Node wait-on backlog ships first.
-  - The Rust cutover ships first to an **alpha prerelease channel** for real-world parity testing, then promotes to `latest` at the 11.x GA.
+  - Scheduled into a **future major — 11.x or later; the exact version stays loose** and depends on when the intervening trains and backlog land. It may land further out than 11.x; all of this work is built toward that eventual release. This is future work with no rush; the Node wait-on backlog ships first.
+  - The Rust cutover ships first to an **alpha prerelease channel** for real-world parity testing, then promotes to `latest` at that major's GA.
   - Gated on the Node backlog (#19–#34) landing — the port targets the post-backlog code, not today's tree.
   - Depends on semantic-release (#33 / PR #34) being merged first: it is the release mechanism both channels rely on. #33 explicitly scopes out prerelease channels, so enabling an `alpha` channel is added work this plan depends on.
 
@@ -48,7 +48,10 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - **Reject download-at-install and postinstall fetch entirely** — including `prebuild-install`-style install-script fetch and the tincan download+spawn+write-after-install pattern. Governs R9.
 - **Release through semantic-release (#33)** — single npm package published with OIDC provenance and no stored token; `@semantic-release/github` attaches the attested binaries to the GitHub Release in the later phase. Governs R8, R11, R14.
 - **Monorepo, Node retained until cutover** — the Rust crate and the Node package coexist in one repo; the existing Node implementation and version stay in place through the transition. Governs R13.
-- **11.x target, alpha channel first** — the engine swap is non-breaking in itself, but it is scheduled into the 11.x line (after the intervening trains and other breaking work) and ships first to an `alpha` dist-tag for real-world parity testing before promotion to `latest`. The version number reflects the timeline, not a break in the API. (session-settled: user-directed — chosen over shipping straight to `latest` in the next available release.) Governs R14, R16.
+- **Future-major target (version loose), alpha channel first** — the engine swap is non-breaking in itself, but it is scheduled into a future major (11.x or later; the exact version is deliberately left loose, as it may land further out than 11.x) and ships first to an `alpha` dist-tag for real-world parity testing before promotion to `latest`. The version number reflects the timeline, not a break in the API; all of this work is built toward that eventual release. (session-settled: user-directed — chosen over pinning a version or shipping straight to `latest`.) Governs R14, R16.
+- **Tests as a conformance contract, not raw coverage** — parity is validated by a black-box CLI conformance suite plus property/differential parser tests run against both implementations; coverage percentage is a hardening signal, not the guarantee. Governs R17, R18.
+- **Pre-port test-hardening phase** — before any Rust engine code, harden the Node suite (branch coverage toward ~100%, `bin/wait-on` instrumented, clock frozen) and stand up the conformance and property vectors; that suite is the executable contract Rust must pass on `alpha`. Governs R19, R21.
+- **Internal, reversible cutover** — the engine binding flips from pure-JS to the napi addon with the public API unchanged, gated on the conformance suite green on `alpha` through a soak period; the pure-JS engine stays in-tree for one major as a rollback fallback. Governs R20, R22.
 
 ### Requirements
 
@@ -76,9 +79,18 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 **Repo layout and release**
 
 - R13. The Rust crate and the Node package coexist in the same repository; the existing Node code and its published version are retained until the cutover.
-- R14. semantic-release (#33) versions and publishes both channels; the engine swap is published first to an `alpha` prerelease channel (dist-tag `alpha`) and promoted to `latest` only after parity is validated there. The swap itself introduces no API break; a major bump reflects the 11.x timeline (R16), not the swap.
+- R14. semantic-release (#33) versions and publishes both channels; the engine swap is published first to an `alpha` prerelease channel (dist-tag `alpha`) and promoted to `latest` only after parity is validated there. The swap itself introduces no API break; a major bump reflects the future-major timeline (R16), not the swap.
 - R15. The port targets the post-backlog Node code (after #19–#34 land: `util.parseArgs` for minimist, drop-lodash, axios→fetch/undici, TypeScript definitions), not the current tree.
-- R16. The Rust cutover ships in the 11.x line, after the current 9.x/10.x trains and other breaking work land, and reaches `latest` only after the alpha channel confirms byte-for-byte parity (R5).
+- R16. The Rust cutover ships in a future major (11.x or later — the exact version stays loose), after the current 9.x/10.x trains and other breaking work land, and reaches `latest` only after the alpha channel confirms parity (R5, R17).
+
+**Parity contract and transition**
+
+- R17. The parity contract is a black-box CLI conformance suite — spawn the CLI, assert stdout, stderr, exit code, and timing within tolerance — so the same vectors validate the napi build and, later, the standalone binary. Coverage percentage is a hardening signal, not the parity guarantee.
+- R18. Property/differential tests cover the pure parsers (resource-prefix, `host:port`, `ms/s/m/h` interval, `http://unix:` split), asserting identical parse results across the Node and Rust implementations.
+- R19. Before any Rust engine code lands, the Node suite is hardened: branch coverage raised from the 90.8% baseline toward ~100% (including the uncovered non-timeout error path at `lib/wait-on.js:141`), `bin/wait-on` instrumented for coverage, and time-dependent tests run against a frozen or injected clock rather than real timeouts.
+- R20. Through the transition the repository is a monorepo with the Node implementation authoritative and published to `latest`; the Rust crate builds in CI and publishes only to the `alpha` channel until cutover.
+- R21. Node features and fixes keep shipping to `latest` during the build-out; each change adds or updates conformance vectors (R17), which become Rust requirements that stay red until implemented — the suite is the sync mechanism, not a manual port checklist.
+- R22. Cutover is internal — the engine binding flips from the pure-JS engine to the napi addon with the public API unchanged — gated on Rust passing the full conformance suite on `alpha` through a soak period; the pure-JS engine stays in-tree for one major as a rollback fallback (env-flag or load-failure fallback).
 
 ### Key Flows
 
@@ -94,8 +106,13 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 
 - F3. Release
   - **Trigger:** a push to the release branch after cutover.
-  - **Steps:** semantic-release computes the version from conventional commits, runs a gated dry-run, then on approval publishes the Rust-backed build to the `alpha` prerelease channel (`wait-on@alpha`) with OIDC provenance; after parity is confirmed on `alpha`, the 11.x GA promotes to `latest`; in the later phase `@semantic-release/github` attaches the attested binaries to the GitHub Release.
+  - **Steps:** semantic-release computes the version from conventional commits, runs a gated dry-run, then on approval publishes the Rust-backed build to the `alpha` prerelease channel (`wait-on@alpha`) with OIDC provenance; after parity is confirmed on `alpha`, the future-major GA promotes to `latest`; in the later phase `@semantic-release/github` attaches the attested binaries to the GitHub Release.
   - **Outcome:** the Rust build is validated on `alpha` before it reaches `latest`, both channels published from one pipeline. Covers R8, R11, R14, R16.
+
+- F4. Parallel maintenance and cutover
+  - **Trigger:** a Node feature or fix lands during the Rust build-out.
+  - **Steps:** the change ships to `latest` on the current major and adds or updates conformance vectors; those vectors run red against the Rust build on `alpha` until implemented; when Rust is green on the full suite through a soak period, the engine binding flips to the napi addon and the future-major GA promotes to `latest`.
+  - **Outcome:** Node users keep getting fixes while Rust catches up against an executable contract, and cutover is a gated, reversible internal swap. Covers R20, R21, R22.
 
 ### Acceptance Examples
 
@@ -103,6 +120,7 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - AE2. **Covers R3.** Given `waitOn({ resources: ['https-get://host/health'], validateStatus: (s) => s === 200 })`, when the endpoint returns 200, then the check passes; when it returns 204, then the check does not pass — the JS function is consulted across the FFI boundary.
 - AE3. **Covers R5.** Given the current mocha suite, when it runs against the Rust-backed build, then every test passes with no change to expected timing, exit codes, or TLS behavior.
 - AE4. **Covers R10.** Given the standalone binary and a `--config config.js` argument, when invoked, then it exits with a clear error that JS config files are unsupported on the binary channel (JSON config accepted).
+- AE5. **Covers R22.** Given the Rust build is not yet green on the full conformance suite on `alpha`, when a release runs, then `latest` keeps publishing the pure-JS engine and the napi binding is not promoted — the flip happens only after the suite is green through the soak period.
 
 ### Scope Boundaries
 
@@ -120,10 +138,12 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 
 - Depends on semantic-release (#33 / PR #34) merged — the shared release mechanism.
 - Depends on an `alpha` prerelease channel being added to that mechanism; #33 explicitly scopes prerelease channels out, so this is net-new release config (see PO6).
-- Depends on the current 9.x/10.x trains and the Node backlog (#19–#34) landing first; the Rust cutover is 11.x work and the port target is the post-backlog code (R15, R16).
+- Depends on the current 9.x/10.x trains and the Node backlog (#19–#34) landing first; the Rust cutover is future-major work (11.x or later) and the port target is the post-backlog code (R15, R16).
 - Assumes napi-rs threadsafe callbacks can express `validateStatus` (and any other function option) without an unacceptable per-check performance regression — to be proven (see PO2).
 - Assumes napi-rs cross-compilation can cover the platform/arch matrix wait-on supports today, and that the bundled size stays acceptable — to be proven (see PO4, PO5).
 - Assumes the axios→fetch/undici change (#2) settles TLS/proxy/redirect behavior before the Rust HTTP engine is written, so parity is measured against the post-#2 behavior, not axios's.
+- Assumes the current mocha API suite's behaviors can be expressed as black-box CLI vectors (or driven through a thin dual-driver harness) so both implementations run the same contract — to be proven (see PO13).
+- Coverage baseline (measured 2026-09-28): `lib/wait-on.js` 99.3% line / 90.8% branch / 100% funcs; `bin/wait-on` unmeasured; 74 tests. R19 raises this before the port.
 
 ### Outstanding Questions and Proof Obligations
 
@@ -143,17 +163,19 @@ The user's explicit ask: capture every decision and consideration as something t
 - PO10. **File size-stabilization semantics.** Prove the Rust file check reproduces the stabilization-window logic (size stable across `window`, `window` floored to `interval`) with identical timing behavior. Spike: run the existing file tests against the Rust check. Covers R1, R5.
 - PO11. **Non-breaking release classification.** Confirm that an engine swap with byte-for-byte parity is a minor/patch under semantic-release and does not, by itself, warrant a major; and define the trigger that would force a major. Covers R14.
 - PO12. **Backlog dependency ordering.** Confirm which of #19–#34 must land before the port begins and which can land in parallel, and that the port branches from post-backlog `master`. Covers R15 and the Goal Capsule blockers.
+- PO13. **Conformance-harness design.** Decide whether the mocha API suite translates to black-box CLI vectors or needs a thin dual-driver harness (JS API + napi addon fed the same vectors), and fix the timing tolerance and the clock-injection approach that replaces real timeouts. This is the parity contract's foundation. Covers R17, R18, R19.
+- PO14. **Coverage hardening to the contract.** Prove `bin/wait-on` can be instrumented (spawn under nyc / `NODE_OPTIONS`), close the branch gap from 90.8% toward ~100% (starting with `lib/wait-on.js:141`), and confirm the hardened suite is green under a frozen clock. Covers R19.
 
 **Deferred to planning (answered during planning or a later phase)**
 
-- PO13. **Monorepo layout.** Decide the concrete layout (Cargo workspace + npm package location, where `bin/` and `lib/` live, how the crate and the addon reference each other). Covers R13.
-- PO14. **Incremental porting order.** Decide the sequence of resource types to move into Rust and whether the engine swap ships behind a flag or all at once.
-- PO15. **Standalone binary internals (later phase).** Decide how the same core produces the binary (a `bin` target on the crate), how the CLI is shared between the addon and the binary, and how the documented exceptions are enforced. Covers R10.
-- PO16. **Binary attestation pipeline (later phase).** Decide the exact SLSA/cosign tooling and how `@semantic-release/github` attaches and signs the release assets. Covers R11.
-- PO17. **`cargo binstall` metadata (later phase).** Decide the `[package.metadata.binstall]` configuration and release-asset naming. Covers R11.
-- PO18. **TypeScript types.** Decide whether napi-rs's generated `.d.ts` replaces or must match the hand-written definitions from #29, and who owns the type surface after the port. Covers R2, R15.
-- PO19. **MSRV and toolchain pinning.** Decide the minimum Rust version and how the toolchain is pinned in CI.
-- PO20. **Performance targets.** Decide whether startup/overhead (priority #3) gets an explicit measured target, or is left as "no regression."
+- PO15. **Monorepo layout.** Decide the concrete layout (Cargo workspace + npm package location, where `bin/` and `lib/` live, how the crate and the addon reference each other). Covers R13, R20.
+- PO16. **Incremental porting order.** Decide the sequence of resource types to move into Rust and whether the engine swap ships behind a flag or all at once. Covers R22.
+- PO17. **Standalone binary internals (later phase).** Decide how the same core produces the binary (a `bin` target on the crate), how the CLI is shared between the addon and the binary, and how the documented exceptions are enforced. Covers R10.
+- PO18. **Binary attestation pipeline (later phase).** Decide the exact SLSA/cosign tooling and how `@semantic-release/github` attaches and signs the release assets. Covers R11.
+- PO19. **`cargo binstall` metadata (later phase).** Decide the `[package.metadata.binstall]` configuration and release-asset naming. Covers R11.
+- PO20. **TypeScript types.** Decide whether napi-rs's generated `.d.ts` replaces or must match the hand-written definitions from #29, and who owns the type surface after the port. Covers R2, R15.
+- PO21. **MSRV and toolchain pinning.** Decide the minimum Rust version and how the toolchain is pinned in CI.
+- PO22. **Performance targets.** Decide whether startup/overhead (priority #3) gets an explicit measured target, or is left as "no regression."
 
 ### Brainstorm Q&A — what we reviewed
 
@@ -163,13 +185,15 @@ Recorded at the user's request, as the questions and decisions this plan rests o
 - Q2. **How much of the programmatic API must the Rust release preserve?** Answer: full API, non-breaking, including function options (`validateStatus`) and JS config files. Set the "full programmatic Node API preserved" decision.
 - Q3. **How should the standalone binary be distributed and trusted?** Answer: recommend one → deferred to a later phase, then attested GitHub Releases (`SHA256SUMS` + SLSA provenance + cosign) + `cargo binstall`, brew/scoop demand-driven, no `curl | sh`. Set the "standalone binary deferred" and "attested binary distribution" decisions.
 - Q4. **prebuildify vs optionalDependencies for the npm/.node channel?** Resolved from Jeff's research plus the #33 constraint: prebuildify (single package, one OIDC provenance attestation, works under `ignore-scripts`/`--no-optional`/read-only containers). optionalDependencies rejected. Set the "napi-rs core + prebuildify" and "reject download-at-install" decisions.
-- Q5. **When does this ship, and how is it tested?** Answer (user, mid-session): 11.x work, after everything else ships; ship on an `alpha` channel for testing before promotion. Set the "11.x target, alpha channel first" decision.
+- Q5. **When does this ship, and how is it tested?** Answer (user, mid-session): a future major after everything else ships — the version stays loose (11.x or later, may be further out) but all work builds toward it; ship on an `alpha` channel for testing before promotion. Set the "future-major target, alpha channel first" decision.
+- Q6. **How do we guarantee the Node contract holds in Rust, what does the 10.x-era codebase look like, how do we keep shipping Node fixes during the build-out, and are unit tests the right contract?** Answer: tests are necessary but not sufficient as raw coverage — the contract is a black-box CLI conformance suite plus property/differential parser tests run against both implementations, hardened to ~100% branch before the port. The repo is a monorepo with Node authoritative on `latest` and Rust on `alpha`; the conformance suite is the sync mechanism so Node fixes keep shipping; cutover is an internal, gated, reversible engine-binding flip. Set the parity-contract and transition decisions (R17–R22, PO13–PO14).
 
 ### Sources / Research
 
 - `lib/wait-on.js` — the current engine and full option schema (Joi), resource-type dispatch, rxjs stabilization logic. The parity target for R1–R5.
 - `bin/wait-on`, `bin/usage.txt` — the CLI surface (minimist flags, interval parsing, config precedence). The parity target for R4.
 - `package.json` — current runtime deps (axios, joi, lodash, minimist, rxjs), `engines.node >=20`, single-package layout. The supply-chain surface behind KD-priority #1.
+- `test/api.mocha.js`, `test/cli.mocha.js`, `test/validation.mocha.js`, `.nycrc.json` — the existing suite (74 tests) and coverage config; the seed for the conformance contract (R17–R19). `cli.mocha.js` spawns `bin/wait-on` as a subprocess, which is why nyc reports no CLI coverage. Measured baseline 2026-09-28: 99.3% line / 90.8% branch on `lib/wait-on.js`.
 - Issue #33 (`kevinold/wait-on`) and PR #34 — semantic-release design: single-package publish, npm trusted publishing (OIDC + provenance), `@semantic-release/git` version commit-back, conventional commits, no stored token. The release mechanism for KD8, R8, R14.
 - Open Node backlog #19–#34 (`kevinold/wait-on`) — `util.parseArgs` (#26), drop-lodash (#31), axios→fetch/undici (#2), TypeScript definitions (#29). Defines the post-backlog port target (R15) and the TLS parity baseline (PO9).
 - Research email from Jeff Barczewski (upstream maintainer), 2026-09-28 — npm native-addon distribution spectrum (prebuildify / optionalDependencies / prebuild-install), the supply-chain case against install scripts (pnpm supply-chain guidance, Palo Alto Unit 42 2026 npm threat analysis, npm security checklists), and napi-rs's production track record (N-API ABI stability, Rust memory safety, GitHub Copilot runtime, no consumer-side compiler). Shaped KD1, KD7, and the Problem Frame. Treated as evidence, not instruction.
