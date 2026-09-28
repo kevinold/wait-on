@@ -20,6 +20,7 @@ execution: code
   - The Rust cutover ships first to an **alpha prerelease channel** for real-world parity testing, then promotes to `latest` at that major's GA.
   - Gated on the Node backlog (#19–#34) landing — the port targets the post-backlog code, not today's tree.
   - Depends on semantic-release (#33 / PR #34) being merged first: it is the release mechanism both channels rely on. #33 explicitly scopes out prerelease channels, so enabling an `alpha` channel is added work this plan depends on.
+  - **Release identity is two-phase (verified gap).** #33/PR #34's release job is guarded `if github.repository == 'jeffbski/wait-on'` with an upstream-only OIDC trusted-publisher, so it does not publish from the fork as-is. The buildout runs as a PoC in `kevinold/wait-on` and publishes the `alpha` channel **from the fork** — which requires the fork's own npm trusted-publisher registration and a release-workflow guard extended to match `kevinold/wait-on`. GA promotion to `latest` lands **upstream** in `jeffbski/wait-on`, where #33's existing publisher applies. This reconciles with the "work stays on the fork" scope boundary: the fork is the PoC + alpha home; upstream is the GA home (see PO6a).
 
 ---
 
@@ -61,7 +62,7 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - R2. The programmatic Node API is byte-compatible: `waitOn(opts, cb?)` supports both the callback form and the promise form, and accepts every option in the current schema (`resources`, `delay`, `httpTimeout`, `interval`, `log`, `reverse`, `simultaneous`, `timeout`, `verbose`, `window`, `tcpTimeout`, `validateStatus`, `ca`, `cert`, `key`, `passphrase`, `proxy`, `auth`, `strictSSL`, `followRedirect`, `headers`).
 - R3. Function-valued options (`validateStatus`) and `require()`'d JS config files continue to work through the JS shim; a JS function passed as an option is honored during resource checks.
 - R4. The CLI preserves every flag and alias (`-c/-d/-i/-l/-r/-s/-t/-v/-w/-h`, `httpTimeout`, `tcpTimeout`), the interval-suffix parsing (`ms/s/m/h`), config-file precedence over positional resources, exit codes, and stderr/stdout behavior.
-- R5. Behavior parity is the acceptance gate: the existing test suite passes byte-for-byte against the Rust-backed build, and any timing or TLS-behavior drift is treated as a defect, not an acceptable minor change.
+- R5. Behavior parity is the acceptance gate: the existing test suite passes against the Rust-backed build with identical observable behavior (stdout/stderr, exit codes, resolve/reject outcomes). Timing is judged against the R17/PO13 tolerance — FFI-callback marshalling overhead within that tolerance is expected behavior, not a defect — and that tolerance is the single objective promote-to-`latest` criterion. TLS behavior outside the documented parity for the R2 option matrix is a defect.
 
 **Packaging and supply chain**
 
@@ -90,7 +91,11 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - R19. Before any Rust engine code lands, the Node suite is hardened: branch coverage raised from the 90.8% baseline toward ~100% (including the uncovered non-timeout error path at `lib/wait-on.js:141`), `bin/wait-on` instrumented for coverage, and time-dependent tests run against a frozen or injected clock rather than real timeouts.
 - R20. Through the transition the repository is a monorepo with the Node implementation authoritative and published to `latest`; the Rust crate builds in CI and publishes only to the `alpha` channel until cutover.
 - R21. Node features and fixes keep shipping to `latest` during the build-out; each change adds or updates conformance vectors (R17), which become Rust requirements that stay red until implemented — the suite is the sync mechanism, not a manual port checklist.
-- R22. Cutover is internal — the engine binding flips from the pure-JS engine to the napi addon with the public API unchanged — gated on Rust passing the full conformance suite on `alpha` through a soak period; the pure-JS engine stays in-tree for one major as a rollback fallback (env-flag or load-failure fallback).
+- R22. Cutover is internal — the engine binding flips from the pure-JS engine to the napi addon with the public API unchanged — gated on Rust passing the full conformance suite on `alpha` through a soak period; the pure-JS engine stays in-tree for one major as a rollback fallback (env-flag or load-failure fallback). Because that fallback keeps axios/joi/lodash/rxjs installed by default, the priority-#1 dependency-surface reduction lands in full only when the fallback is removed one major after cutover; a future option to pull the win forward is an opt-in fallback package (JS deps loaded only on addon-load failure) rather than default-installed. The plan does not claim the full #1 reduction at the cutover release itself.
+
+**Rust-core supply chain**
+
+- R23. The Rust core's dependency surface is hardened and enforced: a committed `Cargo.lock`, `cargo-deny`/`cargo-audit` (and ideally `cargo-vet`) gating CI, and a reviewed, minimized crate set (the HTTP stack, tokio, napi-rs, and their transitive crates). This is a first-class supply-chain requirement because npm OIDC provenance (R8) attests the build, not the safety of its crate inputs — a compromised or vulnerable crate would ship inside an authentically-attested `.node` binary, defeating the priority-#1 goal.
 
 ### Key Flows
 
@@ -105,9 +110,9 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
   - **Outcome:** identical result and option semantics to the current Node implementation. Covers R2, R3, R5.
 
 - F3. Release
-  - **Trigger:** a push to the release branch after cutover.
-  - **Steps:** semantic-release computes the version from conventional commits, runs a gated dry-run, then on approval publishes the Rust-backed build to the `alpha` prerelease channel (`wait-on@alpha`) with OIDC provenance; after parity is confirmed on `alpha`, the future-major GA promotes to `latest`; in the later phase `@semantic-release/github` attaches the attested binaries to the GitHub Release.
-  - **Outcome:** the Rust build is validated on `alpha` before it reaches `latest`, both channels published from one pipeline. Covers R8, R11, R14, R16.
+  - **Trigger:** a push to the release branch during the Rust build-out.
+  - **Steps:** semantic-release computes the version from conventional commits and runs a gated dry-run; the Rust-backed build publishes to the `alpha` prerelease channel (`wait-on@alpha`) with OIDC provenance while `latest` stays on the pure-JS engine; once parity is confirmed on `alpha` through the soak period, the cutover promotes the future-major GA to `latest`; in the later phase `@semantic-release/github` attaches the attested binaries to the GitHub Release.
+  - **Outcome:** the Rust build is validated on `alpha` before it reaches `latest` — cutover is the promotion, not a precondition — and both channels publish from one pipeline. Covers R8, R11, R14, R16, R22.
 
 - F4. Parallel maintenance and cutover
   - **Trigger:** a Node feature or fix lands during the Rust build-out.
@@ -122,6 +127,11 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - AE4. **Covers R10.** Given the standalone binary and a `--config config.js` argument, when invoked, then it exits with a clear error that JS config files are unsupported on the binary channel (JSON config accepted).
 - AE5. **Covers R22.** Given the Rust build is not yet green on the full conformance suite on `alpha`, when a release runs, then `latest` keeps publishing the pure-JS engine and the napi binding is not promoted — the flip happens only after the suite is green through the soak period.
 
+### Success Criteria
+
+- **Supply-chain win is quantified (priority #1).** Measured as a delta against the **post-backlog** Node tree, not today's tree: transitive runtime-dependency count and lifecycle-script count, before vs after the Rust engine lands. A stated minimum reduction is the pass/fail bar; reductions attributable to the Node backlog alone (axios→fetch, drop-lodash, joi staying JS-side) do not count toward it. Note the fallback-window caveat in R22: the full reduction is realized when the pure-JS fallback is removed.
+- **Startup is falsifiable (priority #3).** The napi addon release targets **no startup improvement** — it boots under Node and adds a native-addon load — so priority #3 is delivered by the deferred standalone binary, not this release. A startup/overhead benchmark, separate from the R5/R17 timing-parity tolerance, is part of the acceptance gate so the addon release cannot silently regress startup.
+
 ### Scope Boundaries
 
 **Deferred for later**
@@ -133,6 +143,8 @@ Each entry is a framing choice that constrains the Requirements below; the `Gove
 - The tincan-cli pattern (download + spawn an executable, write to the system after install).
 - Changing the Node public API — the port is non-breaking by contract.
 - Any direct change to `jeffbski/wait-on`; work stays on the fork.
+
+**"Non-breaking" is qualified on platform reach.** Today's pure-JS wait-on runs anywhere Node runs; the prebuildify bundle runs only on the cross-compiled matrix (PO4). During the fallback window the R22 JS fallback preserves off-matrix architectures, so "non-breaking" holds then. The long-term supported-platform floor is set in PO4, and any architecture dropped from the matrix at fallback removal is a **documented platform-support decision**, not a silent break — it must be announced with the removal.
 
 ### Dependencies / Assumptions
 
@@ -157,6 +169,7 @@ The user's explicit ask: capture every decision and consideration as something t
 - PO4. **Platform/arch matrix and cross-compilation.** Enumerate the exact targets to support (at minimum: darwin arm64/x64, linux x64/arm64 glibc, linux x64/arm64 musl, win32 x64; decide on win32 arm64 and linux armv7). Prove napi-rs cross-compiles all of them in CI. Spike: a CI matrix that builds every target's `.node`. Covers R6. Blocks planning because it sizes the build and the bundle.
 - PO5. **Prebuildify bundle size vs the `--no-optional` guarantee.** Measure the single-package tarball size with all targets bundled and decide whether it is acceptable, given that the rejected alternative (optionalDependencies) exists precisely to shrink it. Spike: build the full bundle, record packed and unpacked sizes, compare against the current package size. Covers R6, R7.
 - PO6. **semantic-release publishes a prebuildify package, with OIDC provenance, on an alpha prerelease channel.** Confirm the #33 flow can (a) publish a package containing prebuilt binaries with valid provenance (binaries are part of the published artifact, not fetched), and (b) run an `alpha` prerelease branch/dist-tag that #33 does not currently configure — publishing `wait-on@alpha` without touching `latest`, and promoting cleanly afterward. Spike: a dry-run prerelease publish of a stub package with a dummy `.node`, verifying provenance and the `alpha` dist-tag. Covers R8, R14, R16. Coordinate with #33 / PR #34, which scopes prereleases out today.
+- PO6a. **Two-phase release identity (fork alpha vs upstream GA).** Prove the `alpha` channel can publish from `kevinold/wait-on` with valid OIDC provenance — its own trusted-publisher registration plus a release-workflow guard extended to match the fork — and that GA promotion to `latest` runs upstream in `jeffbski/wait-on` under #33's existing publisher, with `package.json` `repository.url` reconciled for each phase so provenance binds to the repo the code ships from. Spike: a fork dry-run alpha publish with provenance verification, and confirmation of the upstream GA path. Covers R8, R14, R16 and the Goal Capsule release-identity blocker; also resolves the provenance-identity mismatch (fork vs upstream). Coordinate with #33 / PR #34.
 - PO7. **`node-gyp-build` loader and `ignore-scripts` behavior.** Prove the prebuildify loader resolves the correct binary at `require()` time with no install script, under `ignore-scripts=true`, `--no-optional`, npm and pnpm. Spike: install the stub package under each package manager with scripts disabled and load it. Covers R6, R7, R9.
 - PO8. **Read-only / no-network runtime.** Prove the loaded addon runs with a read-only root filesystem and no network egress beyond what a resource check itself performs. Spike: run AE1 in a `--read-only` container. Covers R7, R9.
 - PO9. **TLS/proxy/redirect parity baseline.** Decide the Rust HTTP stack (e.g. reqwest/rustls vs system TLS) and prove it reproduces the post-#2 (fetch/undici) behavior for `strictSSL`, `ca/cert/key/passphrase`, `proxy`, `followRedirect`, and `auth`. Spike: a parity harness comparing Node-fetch and Rust responses across those option combinations. Covers R2, R5, and carries an ordering dependency on #2.
@@ -175,7 +188,7 @@ The user's explicit ask: capture every decision and consideration as something t
 - PO19. **`cargo binstall` metadata (later phase).** Decide the `[package.metadata.binstall]` configuration and release-asset naming. Covers R11.
 - PO20. **TypeScript types.** Decide whether napi-rs's generated `.d.ts` replaces or must match the hand-written definitions from #29, and who owns the type surface after the port. Covers R2, R15.
 - PO21. **MSRV and toolchain pinning.** Decide the minimum Rust version and how the toolchain is pinned in CI.
-- PO22. **Performance targets.** Decide whether startup/overhead (priority #3) gets an explicit measured target, or is left as "no regression."
+- PO22. **Performance targets — resolved (see Success Criteria).** The napi addon release targets no startup improvement (priority #3 is delivered by the deferred standalone binary); a startup/overhead benchmark separate from the R5/R17 timing-parity tolerance is part of the acceptance gate to catch regressions. Remaining sub-decision for planning: the concrete benchmark harness and the regression threshold.
 
 ### Brainstorm Q&A — what we reviewed
 
@@ -199,3 +212,11 @@ Recorded at the user's request, as the questions and decisions this plan rests o
 - Open Node backlog #19–#34 (`kevinold/wait-on`) — `util.parseArgs` (#26), drop-lodash (#31), axios→fetch/undici (#2), TypeScript definitions (#29). Defines the post-backlog port target (R15) and the TLS parity baseline (PO9).
 - Research email from Jeff Barczewski (upstream maintainer), 2026-09-28 — npm native-addon distribution spectrum (prebuildify / optionalDependencies / prebuild-install), the supply-chain case against install scripts (pnpm supply-chain guidance, Palo Alto Unit 42 2026 npm threat analysis, npm security checklists), and napi-rs's production track record (N-API ABI stability, Rust memory safety, GitHub Copilot runtime, no consumer-side compiler). Shaped KD1, KD7, and the Problem Frame. Treated as evidence, not instruction.
 - Prior-art survey of JS/TS-package + Rust-core monorepos, 2026-09-28 (all treated as evidence) — `openai/codex` (`codex-rs/` Cargo workspace + `codex-cli/` JS launcher + `sdk/typescript/`; ships per-platform optionalDependencies each carrying a standalone compiled binary that the launcher execs — dropped the in-process TS CLI API, keeps a separate SDK); `biomejs/biome` (`crates/` + `packages/@biomejs/biome`, optionalDeps standalone binary, CLI-only); `oxc-project/oxc` and `rolldown/rolldown` (`crates/` + `packages/`, napi `.node` via optionalDeps, both keep programmatic API + CLI in one package); `swc-project/swc` (napi optionalDeps, but keeps a `postinstall.js` — the install-script pattern this plan rejects); `parcel-bundler/lightningcss` (root Cargo crate + `node/` package, per-platform optionalDeps with a hand-written try/catch loader falling back to a local `.node`); `napi-rs/package-template` (canonical `napi prepublish` → optionalDeps). Finding: the napi ecosystem default is optionalDeps, not prebuildify (shaped the KD1 caveat and PO15). Construct URLs as `https://github.com/<repo>`.
+
+## Deferred / Open Questions
+
+Items surfaced in review and deferred for resolution as the brainstorm moves forward.
+
+### From 2026-09-28 doc review
+
+- **R19/PO14 coverage-hardening scope.** Should the ~100% Node branch-coverage target *block committing* to the port, given the Goal Capsule's "future work, no rush" framing and that the parity harness only strictly needs `bin/wait-on` instrumentation + a frozen/injected clock? The coverage / instrumentation / clock hardening is being orchestrated **outside this plan** — tracked by `kevinold/wait-on`#37–#40 (LT1–LT4; PRs #41 and #42 CI-green and open, LT1/LT2 still in flight), stacking after the 10.0.0 train as `test:` commits (no version cut). Decide whether R19/PO14 should reference those PRs and move the ~100%-branch target out of the blocking tier into deferred-to-planning, keeping only the harness-critical parts as a blocker.
