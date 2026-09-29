@@ -19,44 +19,44 @@ declare namespace waitOn {
     /** Array of resources to wait for. Prefix determines type: file:, http:, https:, http-get:, https-get:, tcp:, socket:, command: */
     resources: string[];
     /** Initial delay in ms before polling begins. @default 0 */
-    delay?: number;
+    delay?: number | undefined;
     /** HTTP HEAD/GET timeout in ms. */
-    httpTimeout?: number;
+    httpTimeout?: number | undefined;
     /** Poll interval in ms. @default 250 */
-    interval?: number;
+    interval?: number | undefined;
     /** Log remaining resources to stdout. @default false */
-    log?: boolean;
+    log?: boolean | undefined;
     /** Reverse mode: succeed when resources are NOT available. @default false */
-    reverse?: boolean;
+    reverse?: boolean | undefined;
     /** Max concurrent connections per resource. @default Infinity */
-    simultaneous?: number;
+    simultaneous?: number | undefined;
     /** Overall timeout in ms. Rejects/errors when exceeded. @default Infinity */
-    timeout?: number;
+    timeout?: number | undefined;
     /** Custom function to determine if an HTTP status code is a success. Defaults to 2xx. */
-    validateStatus?: ValidateStatus;
+    validateStatus?: ValidateStatus | undefined;
     /** Enable debug output (also enables log). @default false */
-    verbose?: boolean;
+    verbose?: boolean | undefined;
     /** Stabilization window in ms. Resource must remain available for this duration. @default 750 */
-    window?: number;
+    window?: number | undefined;
     /** TCP connect timeout in ms. @default 300 */
-    tcpTimeout?: number;
+    tcpTimeout?: number | undefined;
     /** Per-attempt timeout in ms for `command:` resources; a command still running at this bound is killed and the next poll retries. 0 disables the limit. @default 0 */
-    commandTimeout?: number;
+    commandTimeout?: number | undefined;
 
     /** HTTP proxy configuration. Set to false to disable. @default undefined */
-    proxy?: false | WaitOnProxyOptions;
+    proxy?: false | WaitOnProxyOptions | undefined;
     /** HTTP Basic auth credentials. */
-    auth?: WaitOnAuth;
+    auth?: WaitOnAuth | undefined;
     /** Reject unauthorized TLS certificates. @default false */
-    strictSSL?: boolean;
+    strictSSL?: boolean | undefined;
     /** Follow HTTP 3xx redirects. @default true */
-    followRedirect?: boolean;
+    followRedirect?: boolean | undefined;
     /**
      * Additional HTTP request headers. Values may be strings, numbers, or
      * booleans (as `@types/wait-on` and the runtime accept); they are passed
      * through to the http client.
      */
-    headers?: Record<string, string | number | boolean>;
+    headers?: Record<string, string | number | boolean> | undefined;
   }
 
   interface WaitOnAuth {
@@ -68,11 +68,11 @@ declare namespace waitOn {
     host: string;
     port: number;
     /** @default 'http' */
-    protocol?: string;
+    protocol?: string | undefined;
     auth?: {
       username: string;
       password: string;
-    };
+    } | undefined;
   }
 
   type ValidateStatus = (status: number) => boolean;
