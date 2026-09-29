@@ -29,7 +29,7 @@
     "test": "npm run lint && npm run test:types && npm run test:mocha",
     "test:coverage": "nyc npm run test:mocha",
     "test:mocha": "mocha --exit \"test/**/*.mocha.js\"",
-    "test:types": "tsc -p test/tsconfig.json"
+    "test:types": "tsc -p test/tsconfig.json && tsc -p test/tsconfig.exact.json"
   },
   "engines": {
     "node": ">=20.0.0"
