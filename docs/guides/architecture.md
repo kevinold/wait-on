@@ -30,7 +30,7 @@ Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wai
 
 Two gates run on every `npm run ci:rs` (R23). `cargo deny check` (`deny.toml`) gates advisories, licenses, bans and sources. `cargo vet --locked` (`supply-chain/`) runs first and fails on any third-party crate version in `Cargo.lock` that no imported audit, local audit (`audits.toml`) or exemption (`config.toml`) covers, so a new or bumped crate cannot reach the addon unreviewed. `imports.lock` pins the imported audits, and `--locked` never fetches new ones. Workspace members (`wait-on-core`, `wait-on-napi`) are not vetted.
 
-Trust sources (`[imports]` in `supply-chain/config.toml`): Mozilla, Google, Bytecode Alliance, ZcashFoundation (URL import of zebra's `audits.toml`, not in the cargo-vet registry), plus ISRG, Embark Studios and Zcash (ECC), each kept because it removed at least one exemption.
+Trust sources (`[imports]` in `supply-chain/config.toml`): Mozilla, Google, Bytecode Alliance and ZcashFoundation are the required baseline. ZcashFoundation is a URL import of zebra's `audits.toml` because it is not in the cargo-vet registry, and it covers none of today's crates (its section in `imports.lock` is empty). ISRG, Embark Studios and Zcash (ECC) are added on top, each kept because it removed at least one exemption.
 
 Baseline (2026-09-30, L11): 148 third-party crates, 19 fully audited by imports, 129 exempted. Of the exemptions, 63 are small bumps past an audited version (`notes` names the audited base) and 66 have no audited base. Every exemption carries a `notes` reason. A change that raises the exemption count should say why in its PR; the preferred path is certifying (see [development.md](development.md#vetting-a-new-or-bumped-crate)).
 
