@@ -4,7 +4,8 @@
 // Run from a project that has wait-on installed (ci:rs:package install and container cells).
 // Loads the installed wait-on's engine (WAIT_ON_ENGINE=rust-strict throws if the addon cannot load),
 // waits on a local tcp listener through the installed API and then the installed CLI, prints one
-// JSON line { addonPath, realpath, pkgDir, api, cli } and exits with the CLI's code.
+// JSON line { addonPath, realpath, pkgDir, api, cli, cliError } and exits with the CLI's code
+// (api: true or the API's error message; cliError: the CLI's own stderr).
 // --no-listener waits on a closed port instead, so the check must time out.
 
 const childProcess = require('child_process');
@@ -44,11 +45,14 @@ async function main() {
     console.error(err.message);
   }
   const cliArgs = [path.join(pkgDir, 'bin', 'wait-on'), '--timeout', String(timeout), '--interval', '100', resource];
-  const cli = childProcess.spawnSync(process.execPath, cliArgs, { stdio: ['ignore', 'ignore', 'inherit'] }).status;
+  const run = childProcess.spawnSync(process.execPath, cliArgs, { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+  const cli = run.status;
+  const cliError = run.stderr.trim();
+  if (cliError) console.error(cliError);
 
   if (server.listening) server.close();
-  console.log(JSON.stringify({ addonPath, realpath: fs.realpathSync(addonPath), pkgDir, api, cli }));
-  process.exitCode = cli;
+  console.log(JSON.stringify({ addonPath, realpath: fs.realpathSync(addonPath), pkgDir, api, cli, cliError }));
+  process.exitCode = cli === null ? 1 : cli;
 }
 
 main().catch((err) => {

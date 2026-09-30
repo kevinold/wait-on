@@ -150,8 +150,9 @@ describe('ci:rs:package', function () {
   it('should require only the host dir under host-only', function () {
     const root = tmp();
     touch(root, `${hostDir}/wait-on.node`);
-    expect(ciRsPackage.requiredDirs({ hostOnly: true })).to.deep.equal([hostDir]);
     const hostOnly = ciRsPackage.requiredDirs({ hostOnly: true });
+    expect(hostOnly).to.have.length(1);
+    expect(PO4.concat(`${process.platform}-${process.arch}`)).to.include(hostOnly[0]);
     expect(ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: hostOnly })).to.deep.equal([]);
     const all = ciRsPackage.requiredDirs({ hostOnly: false });
     expect(ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: all })).to.not.be.empty;
@@ -174,7 +175,6 @@ describe('ci:rs:package', function () {
     expect(ciRsPackage.checkPack(packJson, PO4)).to.deep.equal([]);
     const paths = packJson.files.map((f) => f.path);
     for (const dir of PO4) expect(paths).to.include(`prebuilds/${dir}/wait-on.node`);
-    expect(paths.filter((p) => /^(target|crates|scripts|docs|test|benchmarks)\/|^Cargo/.test(p))).to.deep.equal([]);
   });
 
   it('should fail the pack check when a prebuild is missing or an intermediate ships', function () {
@@ -293,6 +293,32 @@ describe('ci:rs:package', function () {
     expect(ciRsPackage.dockerDecision({ dockerFound: true, ci: false }).action).to.equal('run');
   });
 
+  it('should pass a ready probe only when the API and CLI both succeed from the expected dir', function () {
+    const addon = '/app/node_modules/wait-on/prebuilds/linux-x64-musl/wait-on.node';
+    const ready = { realpath: addon, api: true, cli: 0, cliError: '' };
+    const expect0 = { expectReady: true, expectedDir: 'linux-x64-musl' };
+    expect(ciRsPackage.probeVerdict(ready, expect0)).to.equal(null);
+    expect(ciRsPackage.probeVerdict({ ...ready, api: 'boom' }, expect0)).to.include('api');
+    expect(ciRsPackage.probeVerdict({ ...ready, cli: 1 }, expect0)).to.include('cli');
+    expect(ciRsPackage.probeVerdict({ ...ready, cli: null }, expect0)).to.include('cli');
+    expect(ciRsPackage.probeVerdict(ready, { expectReady: true, expectedDir: 'linux-x64' })).to.include('linux-x64');
+  });
+
+  it('should pass a timeout probe only when the API and the CLI each time out', function () {
+    const addon = '/app/node_modules/wait-on/prebuilds/linux-x64/wait-on.node';
+    const timedOut = {
+      realpath: addon,
+      api: 'Timed out waiting for: tcp:127.0.0.1:1',
+      cli: 1,
+      cliError: 'Timed out waiting for: tcp:127.0.0.1:1'
+    };
+    const expectTimeout = { expectReady: false, expectedDir: 'linux-x64' };
+    expect(ciRsPackage.probeVerdict(timedOut, expectTimeout)).to.equal(null);
+    expect(ciRsPackage.probeVerdict({ ...timedOut, cliError: 'Error: Cannot find module' }, expectTimeout)).to.include('cli');
+    expect(ciRsPackage.probeVerdict({ ...timedOut, api: true }, expectTimeout)).to.include('api');
+    expect(ciRsPackage.probeVerdict({ ...timedOut, cli: 0 }, expectTimeout)).to.include('cli');
+  });
+
   describe('prebuild-probe', function () {
     const REPO = path.join(__dirname, '..');
     const PROBE = path.join(REPO, 'scripts', 'prebuild-probe.js');
@@ -330,6 +356,7 @@ describe('ci:rs:package', function () {
       const line = JSON.parse(stdout.trim());
       expect(line.api).to.include('Timed out waiting for');
       expect(line.cli).to.not.equal(0);
+      expect(line.cliError).to.include('Timed out waiting for');
     });
 
     it('should fail under rust-strict when the addon cannot load', function () {

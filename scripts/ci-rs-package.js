@@ -21,6 +21,7 @@ const ADDON = 'wait-on.node';
 const NOT_SHIPPED = /^(target|crates|scripts|docs|test|benchmarks)\/|^Cargo\./;
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
 const PNPM_VERSION = '10.34.6';
+const STUB_PACKAGE_JSON = '{"name":"wait-on-probe","private":true}\n';
 
 function expectedPrebuildDirs() {
   return Object.values(TARGETS).map(prebuildDir);
@@ -128,6 +129,26 @@ function containerCells({ arch }) {
   });
 }
 
+// Judge one probe JSON line. Ready: the API and the CLI both succeeded with the addon from
+// expectedDir. Timeout: the API and the CLI each timed out on their own (the CLI's stderr, not the
+// API's, carries the CLI's message). Returns null on pass, else the reason.
+function probeVerdict(line, { expectReady, expectedDir }) {
+  const TIMED_OUT = 'Timed out waiting for';
+  if (!line.realpath.replace(/\\/g, '/').endsWith(`/prebuilds/${expectedDir}/${ADDON}`)) {
+    return `loaded ${line.realpath}, expected prebuilds/${expectedDir}`;
+  }
+  if (expectReady) {
+    if (line.api !== true) return `api failed: ${line.api}`;
+    if (line.cli !== 0) return `cli exited ${line.cli}: ${line.cliError}`;
+    return null;
+  }
+  if (!String(line.api).includes(TIMED_OUT)) return `api did not time out: ${line.api}`;
+  if (line.cli === 0 || line.cli === null || !String(line.cliError).includes(TIMED_OUT)) {
+    return `cli did not time out (exit ${line.cli}): ${line.cliError}`;
+  }
+  return null;
+}
+
 function dockerDecision({ dockerFound, ci }) {
   if (dockerFound) return { action: 'run' };
   const reason = 'docker not found: read-only container cells (AE1)';
@@ -175,16 +196,20 @@ function main() {
   console.log(`wrote ${packJson.filename} and SHA256SUMS`);
 
   const probe = path.join(__dirname, 'prebuild-probe.js');
+  const host = hostDir();
   for (const cell of installCells({ tgz, npmExecPath: npm, env: process.env })) {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), `wait-on-${cell.name}-`));
-    fs.writeFileSync(path.join(project, 'package.json'), '{"name":"probe","private":true}\n');
+    fs.writeFileSync(path.join(project, 'package.json'), STUB_PACKAGE_JSON);
     const installed = childProcess.spawnSync(cell.cmd, cell.args, { cwd: project, env: cell.env, stdio: 'inherit' });
     if (installed.status !== 0) fail(`${cell.name}: install failed`);
     const env = { ...cell.env, WAIT_ON_ENGINE: 'rust-strict' };
     const run = childProcess.spawnSync(process.execPath, [probe], { cwd: project, env, encoding: 'utf8' });
     if (run.status !== 0) fail(`${cell.name}: probe exited ${run.status}\n${run.stdout}${run.stderr}`);
-    const { realpath } = JSON.parse(run.stdout.trim());
-    assertInstalledAddon({ realpath, projectRoot: project, dir: hostDir() });
+    const line = JSON.parse(run.stdout.trim());
+    const problem = probeVerdict(line, { expectReady: true, expectedDir: host });
+    if (problem) fail(`${cell.name}: ${problem}`);
+    const { realpath } = line;
+    assertInstalledAddon({ realpath, projectRoot: project, dir: host });
     console.log(`${cell.name}: loaded ${realpath}`);
     fs.rmSync(project, { recursive: true, force: true });
   }
@@ -192,20 +217,24 @@ function main() {
   const ci = Boolean(process.env.CI);
   const decision = dockerDecision({ dockerFound: !childProcess.spawnSync('docker', ['--version']).error, ci });
   if (decision.action === 'fail') fail(decision.reason);
-  if (decision.action === 'skip') return console.log(decision.reason);
+  if (decision.action === 'skip') {
+    console.log(decision.reason);
+    return;
+  }
   const cells = containerCells({ arch: process.arch });
   const unpacked = cells.filter((c) => !packJson.files.some((f) => f.path === `prebuilds/${c.expectedDir}/${ADDON}`));
   if (unpacked.length) {
     const reason = `no ${[...new Set(unpacked.map((c) => c.expectedDir))].join(', ')} prebuild: container cells (AE1)`;
     if (ci) fail(`${reason} must run in CI`);
-    return console.log(`${reason} skipped`);
+    console.log(`${reason} skipped`);
+    return;
   }
 
   for (const cell of cells.filter((c) => c.expectReady)) {
     const context = fs.mkdtempSync(path.join(os.tmpdir(), `${cell.tag}-`));
     fs.writeFileSync(path.join(context, 'Dockerfile'), cell.dockerfile);
     fs.writeFileSync(path.join(context, '.npmrc'), cell.npmrc);
-    fs.writeFileSync(path.join(context, 'package.json'), '{"name":"ae1","private":true}\n');
+    fs.writeFileSync(path.join(context, 'package.json'), STUB_PACKAGE_JSON);
     fs.copyFileSync(tgz, path.join(context, 'wait-on.tgz'));
     fs.copyFileSync(probe, path.join(context, 'prebuild-probe.js'));
     const built = childProcess.spawnSync('docker', ['build', '-t', cell.tag, context], { stdio: 'inherit' });
@@ -215,10 +244,13 @@ function main() {
   for (const cell of cells) {
     const run = childProcess.spawnSync('docker', cell.runArgs, { encoding: 'utf8' });
     const output = `${run.stdout}${run.stderr}`;
-    const passed = cell.expectReady
-      ? run.status === 0 && JSON.parse(run.stdout.trim()).realpath.endsWith(`/prebuilds/${cell.expectedDir}/${ADDON}`)
-      : run.status !== 0 && run.stderr.includes('Timed out waiting for');
-    if (!passed) fail(`${cell.name}: unexpected result (exit ${run.status})\n${output}`);
+    let problem;
+    try {
+      problem = probeVerdict(JSON.parse(run.stdout.trim()), cell);
+    } catch {
+      problem = 'no probe result';
+    }
+    if (problem) fail(`${cell.name}: ${problem} (exit ${run.status})\n${output}`);
     console.log(`${cell.name}: ok (exit ${run.status})\n${output.trim()}`);
   }
 }
@@ -236,6 +268,7 @@ module.exports = {
   sha256sumsLine,
   installCells,
   assertInstalledAddon,
+  probeVerdict,
   containerCells,
   dockerDecision,
   parseArgs,
