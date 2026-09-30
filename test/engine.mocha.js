@@ -207,6 +207,20 @@ describe('engine selection', function () {
       expect(failed.error).to.match(/^Command failed: /);
       expect(failed.error).to.include('boom');
     });
+
+    it('should keep answering a file: probe while five slow commands run under the built addon', async function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      // Five 3s commands outnumber the 4 libuv threadpool threads; fileSize runs on that
+      // pool, so the file resolves only if runCommand keeps its attempts off the pool.
+      const slow = [1, 2, 3, 4, 5].map((n) => `command:node -e "setTimeout(function () {}, 3000)" ${n}`);
+      let err;
+      await withEnv({ WAIT_ON_ENGINE: 'rust-strict' }, () =>
+        waitOn({ resources: [...slow, __filename], timeout: 1500, interval: 100, window: 100 })
+      ).catch((e) => (err = e));
+      expect(err.message).to.match(/^Timed out waiting for/);
+      expect(err.message).to.include(slow[4].slice('command:'.length));
+      expect(err.message).to.not.include(__filename);
+    });
   });
 
   describe('invalid value', function () {
