@@ -1190,6 +1190,22 @@ describe('api', function () {
       });
     });
 
+    it('in reverse mode, treats a command killed by commandTimeout as failing', function (done) {
+      temp.mkdir({}, function (err, dirPath) {
+        if (err) return done(err);
+        const runner = path.resolve(dirPath, 'hang.js');
+        // Hangs forever, so reverse can only resolve once commandTimeout kills an attempt.
+        fs.writeFileSync(runner, 'setInterval(function () {}, 1000);\n');
+        waitOn(
+          { resources: [`command:node ${runner}`], reverse: true, commandTimeout: 200, timeout: 4000, interval: 100 },
+          function (err) {
+            expect(err).to.not.be.ok;
+            done();
+          }
+        );
+      });
+    });
+
     it('in reverse mode, waits until the command starts failing', function (done) {
       temp.mkdir({}, function (err, dirPath) {
         if (err) return done(err);

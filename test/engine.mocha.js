@@ -18,7 +18,7 @@ const CLI_PATH = path.resolve(__dirname, '../bin/wait-on');
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
 const POISON = path.join(os.tmpdir(), `wait-on-no-such-addon-${process.pid}`, 'wait-on.node');
-const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH', 'WAIT_ON_FAKE_FILE_SIZE'];
+const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH', 'WAIT_ON_FAKE_FILE_SIZE', 'WAIT_ON_FAKE_COMMAND_OK'];
 const OPTS = { resources: [__filename], timeout: 1000, interval: 100, window: 100 };
 
 // Run fn with the engine env vars set exactly to vars (unset when absent), then restore.
@@ -270,6 +270,74 @@ describe('engine selection', function () {
         waitOn({ ...fast, reverse: true, resources: [__filename] })
       );
       expect(fake.calls).to.include(__filename);
+    });
+  });
+
+  describe('command: check routing', function () {
+    // fake-addon.js answers ok:true (or ok:false with WAIT_ON_FAKE_COMMAND_OK=0) without
+    // spawning, so outcomes below are ones JS cannot produce for these commands
+    const fake = require(FIXTURE_ADDON);
+    const failing = 'node -e "process.exit(1)"';
+    const passing = 'node -e "process.exit(0)"';
+    const rust = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
+    const fast = { timeout: 1000, interval: 100 };
+
+    beforeEach(function () {
+      fake.calls.length = 0;
+    });
+
+    // Run fn with console.log captured (verbose output binds it when waitOn starts).
+    async function captureLog(fn) {
+      const lines = [];
+      const original = console.log;
+      console.log = (...args) => lines.push(args.join(' '));
+      try {
+        await fn();
+      } finally {
+        console.log = original;
+      }
+      return lines;
+    }
+
+    it('should succeed on a failing command under rust when the stub addon answers the check', async function () {
+      await withEnv(rust, () => waitOn({ ...fast, commandTimeout: 200, resources: [`command:${failing}`] }));
+      expect(fake.calls).to.deep.include({ command: failing, timeoutMs: 200 });
+    });
+
+    it('should exit 0 from the CLI on a failing command under rust with the stub addon, and 1 under js', function () {
+      expect(runCLI(rust, `command:${failing}`).code).to.equal(0);
+      const js = runCLI({ ...rust, WAIT_ON_ENGINE: 'js' }, `command:${failing}`);
+      expect(js.code).to.equal(1);
+      expect(js.stderr).to.include('Timed out');
+    });
+
+    it('should keep the verbose success and error line shapes under rust', async function () {
+      const ok = await captureLog(() =>
+        withEnv(rust, () => waitOn({ ...fast, verbose: true, resources: [`command:${failing}`] }))
+      );
+      expect(ok.some((l) => l.startsWith(`  Command "${failing}" success. stdout: "fake"`))).to.equal(true);
+      const failed = await captureLog(() =>
+        withEnv({ ...rust, WAIT_ON_FAKE_COMMAND_OK: '0' }, () =>
+          waitOn({ ...fast, verbose: true, reverse: true, resources: [`command:${passing}`] })
+        )
+      );
+      expect(failed.some((l) => l.startsWith('  Command error: "fake"'))).to.equal(true);
+    });
+
+    it('should succeed in reverse mode on a passing command when the stub reports not-ready under rust', async function () {
+      await withEnv({ ...rust, WAIT_ON_FAKE_COMMAND_OK: '0' }, () =>
+        waitOn({ ...fast, reverse: true, resources: [`command:${passing}`] })
+      );
+      expect(fake.calls).to.deep.include({ command: passing, timeoutMs: 0 });
+    });
+
+    it('should never call the stub and time out on a failing command under js', async function () {
+      let err;
+      await withEnv({ ...rust, WAIT_ON_ENGINE: 'js' }, () =>
+        waitOn({ ...fast, timeout: 300, resources: [`command:${failing}`] })
+      ).catch((e) => (err = e));
+      expect(err.message).to.match(/^Timed out waiting for/);
+      expect(fake.calls).to.have.length(0);
     });
   });
 
