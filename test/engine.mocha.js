@@ -467,6 +467,33 @@ describe('engine selection', function () {
     });
   });
 
+  // AE-L4-4 / R-L4-9: an API caller's process exits once waitOn settles, even with a
+  // request in flight to a server that never answers. Real clock, subprocess.
+  describe('process lifetime (hung http server)', function () {
+    this.timeout(10000);
+    const HUNG_API = path.join(__dirname, 'fixtures', 'hung-http-api.js');
+
+    function runHung(engine) {
+      const env = { ...process.env, WAIT_ON_ENGINE: engine };
+      delete env.WAIT_ON_NATIVE_LIBRARY_PATH;
+      // 5 s budget: spawnSync kills the child at the timeout, leaving status null.
+      return childProcess.spawnSync(process.execPath, [HUNG_API], { env, encoding: 'utf8', timeout: 5000 });
+    }
+
+    it('should exit after waitOn rejects under js', function () {
+      const r = runHung('js');
+      expect(r.status, r.stderr).to.equal(0);
+      expect(r.stdout).to.include('settled');
+    });
+
+    it('should exit after waitOn rejects under rust-strict with a request in flight', function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      const r = runHung('rust-strict');
+      expect(r.status, r.stderr).to.equal(0);
+      expect(r.stdout).to.include('settled');
+    });
+  });
+
   describe('invalid value', function () {
     const vars = { WAIT_ON_ENGINE: 'nope', WAIT_ON_NATIVE_LIBRARY_PATH: POISON };
 
