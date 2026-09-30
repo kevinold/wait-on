@@ -1,10 +1,10 @@
-//! HTTP(S) readiness check (HEAD/GET) on reqwest + rustls/ring. No proxy, no OpenSSL.
+//! HTTP(S) readiness check (HEAD/GET) on reqwest + rustls/ring. No OpenSSL, no env proxy.
 
 use std::future::Future;
 use std::sync::{Mutex, Once};
 use std::time::Duration;
 
-use reqwest::{Client, Method, redirect::Policy};
+use reqwest::{Certificate, Client, ClientBuilder, Identity, Method, Proxy, redirect::Policy};
 use tokio::sync::watch;
 
 /// Per-resource options, fixed when the checker is built.
@@ -19,6 +19,16 @@ pub struct HttpOptions {
     pub follow_redirect: bool,
     /// Whole-request timeout (connect through body); `None` or 0 means no timeout.
     pub timeout_ms: Option<u64>,
+    /// PEM bundles to trust exclusively (verified TLS); `None` accepts any cert.
+    pub roots: Option<Vec<String>>,
+    /// Client certificate PEM; used with `key`.
+    pub cert: Option<String>,
+    /// Client key PEM (PKCS#1, SEC1 or PKCS#8); used with `cert`.
+    pub key: Option<String>,
+    /// Proxy URI for every request; `None` connects directly (env is ignored).
+    pub proxy: Option<String>,
+    /// Unix socket (named pipe on Windows) replacing TCP; the proxy is then ignored.
+    pub socket_path: Option<String>,
 }
 
 /// One check's result. `ok` is the readiness verdict before any `reverse` negation.
@@ -47,27 +57,54 @@ pub struct HttpChecker {
 static PROVIDER: Once = Once::new();
 
 impl HttpChecker {
-    /// Builds the per-resource client. Errs only on an invalid method or builder failure.
+    /// Builds the per-resource client. Errs on an invalid method, an unparsable proxy URI or a
+    /// builder failure; never on TLS material (KTD3).
     pub fn new(opts: HttpOptions) -> Result<Self, String> {
         // reqwest with `rustls-no-provider` panics in `build()` without a default provider.
         PROVIDER.call_once(|| {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let method = Method::from_bytes(opts.method.as_bytes()).map_err(|e| e.to_string())?;
-        let mut builder = Client::builder()
-            .no_proxy()
-            // ponytail: strictSSL=false default only; strictSSL=true stays on the JS engine (L5).
-            .tls_danger_accept_invalid_certs(true)
-            .redirect(if opts.follow_redirect {
-                Policy::limited(20) // undici fetch's hop limit
-            } else {
-                Policy::none()
-            });
-        if let Some(ms) = opts.timeout_ms.filter(|ms| *ms > 0) {
-            builder = builder.timeout(Duration::from_millis(ms));
-        }
+        let proxy = opts.proxy.as_deref().map(Proxy::all).transpose();
+        let proxy = proxy.map_err(|e| error_chain(&e))?;
+        let base = || {
+            let mut b = Client::builder()
+                .no_proxy()
+                .redirect(if opts.follow_redirect {
+                    Policy::limited(20) // undici fetch's hop limit
+                } else {
+                    Policy::none()
+                });
+            if let Some(ms) = opts.timeout_ms.filter(|ms| *ms > 0) {
+                b = b.timeout(Duration::from_millis(ms));
+            }
+            if let Some(p) = &proxy {
+                b = b.proxy(p.clone());
+            }
+            // Replaces TCP and any proxy (reqwest docs); JS never pairs the two anyway.
+            if let Some(path) = opts.socket_path.clone() {
+                #[cfg(unix)]
+                {
+                    b = b.unix_socket(path);
+                }
+                #[cfg(windows)]
+                {
+                    b = b.windows_named_pipe(path);
+                }
+            }
+            b
+        };
+        let has_tls = opts.roots.is_some() || opts.cert.is_some() || opts.key.is_some();
+        let client = with_tls(base(), &opts)
+            .and_then(ClientBuilder::build)
+            // Bad TLS material fails every TLS hop, not construction (Node's per-connection error).
+            .or_else(|e| match has_tls {
+                true => base().tls_certs_only([]).build(),
+                false => Err(e),
+            })
+            .map_err(|e| error_chain(&e))?;
         Ok(Self {
-            client: Mutex::new(Some(builder.build().map_err(|e| error_chain(&e))?)),
+            client: Mutex::new(Some(client)),
             method,
             url: opts.url,
             headers: opts.headers,
@@ -140,6 +177,25 @@ impl HttpChecker {
         }
         out
     }
+}
+
+/// `roots` → verified TLS over exactly those certs; absent → any cert. `cert`+`key` → identity.
+fn with_tls(mut b: ClientBuilder, opts: &HttpOptions) -> reqwest::Result<ClientBuilder> {
+    b = match &opts.roots {
+        Some(roots) => {
+            let mut certs = vec![];
+            for pem in roots {
+                certs.extend(Certificate::from_pem_bundle(pem.as_bytes())?);
+            }
+            b.tls_certs_only(certs)
+        }
+        None => b.tls_danger_accept_invalid_certs(true),
+    };
+    // ponytail: a lone cert or key is ignored; JS only passes the pair.
+    if let (Some(cert), Some(key)) = (&opts.cert, &opts.key) {
+        b = b.identity(Identity::from_pem(format!("{cert}\n{key}").as_bytes())?);
+    }
+    Ok(b)
 }
 
 fn cancelled() -> HttpOutcome {
@@ -239,6 +295,7 @@ mod tests {
             headers: vec![],
             follow_redirect,
             timeout_ms,
+            ..Default::default()
         })
         .unwrap()
     }
@@ -439,6 +496,7 @@ mod tests {
             ],
             follow_redirect: true,
             timeout_ms: Some(1000),
+            ..Default::default()
         })
         .unwrap();
         assert!(c.check(None::<NoValidate>).await.ok);
@@ -463,6 +521,183 @@ mod tests {
                 .contains("too many redirects"),
             "{out:?}"
         );
+    }
+
+    fn closed_port() -> u16 {
+        TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn with(url: String, f: impl FnOnce(&mut HttpOptions)) -> Result<HttpChecker, String> {
+        let mut o = HttpOptions {
+            url,
+            method: "GET".into(),
+            follow_redirect: true,
+            timeout_ms: Some(1000),
+            ..Default::default()
+        };
+        f(&mut o);
+        HttpChecker::new(o)
+    }
+
+    const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[tokio::test]
+    async fn proxy_receives_absolute_form_requests_for_the_target() {
+        let (proxy, rx) = serve(vec![reply(OK)]);
+        let target = format!("http://127.0.0.1:{}/ready", closed_port());
+        let c = with(target.clone(), |o| o.proxy = Some(proxy)).unwrap();
+        let out = c.check(None::<NoValidate>).await;
+        assert!(out.ok, "{out:?}");
+        let head = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(head.starts_with(&format!("GET {target} ")), "{head}");
+        let host = target
+            .trim_start_matches("http://")
+            .trim_end_matches("/ready");
+        assert!(head.contains(&format!("host: {host}\r\n")), "{head}");
+    }
+
+    #[tokio::test]
+    async fn proxy_userinfo_is_percent_decoded_into_basic_auth() {
+        let (proxy, rx) = serve(vec![reply(OK)]);
+        let proxy = proxy.replace("http://", "http://u:p%40%3A%2F@");
+        let target = format!("http://127.0.0.1:{}/", closed_port());
+        let c = with(target, |o| o.proxy = Some(proxy)).unwrap();
+        assert!(c.check(None::<NoValidate>).await.ok);
+        let head = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // base64("u:p@:/")
+        assert!(
+            head.contains("proxy-authorization: Basic dTpwQDov\r\n"),
+            "{head}"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_proxy_the_target_sees_origin_form() {
+        let (base, rx) = serve(vec![reply(OK)]);
+        assert!(
+            with(base, |_| {})
+                .unwrap()
+                .check(None::<NoValidate>)
+                .await
+                .ok
+        );
+        let head = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(head.starts_with("GET / "), "{head}");
+    }
+
+    #[test]
+    fn unparsable_proxy_uri_fails_construction() {
+        let err = with("http://127.0.0.1:1/".into(), |o| {
+            o.proxy = Some("not a uri".into())
+        });
+        assert!(err.is_err());
+    }
+
+    const BAD_PEM: &str =
+        "-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n";
+
+    /// KTD3: bad TLS material never fails `new`; plain http still works, https does not.
+    async fn assert_tls_hops_fail_http_hops_pass(f: impl Fn(&mut HttpOptions) + Copy) {
+        let (base, _rx) = serve(vec![reply(OK)]);
+        let out = with(base, f).unwrap().check(None::<NoValidate>).await;
+        assert!(out.ok, "{out:?}");
+        let (base, _rx) = serve(vec![reply(OK)]);
+        let https = base.replace("http://", "https://");
+        let out = with(https, f).unwrap().check(None::<NoValidate>).await;
+        assert!(!out.ok, "{out:?}");
+        assert!(!out.error.unwrap_or_default().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unparsable_roots_fail_only_tls_hops() {
+        assert_tls_hops_fail_http_hops_pass(|o| o.roots = Some(vec![BAD_PEM.into()])).await;
+    }
+
+    #[tokio::test]
+    async fn garbage_identity_fails_only_tls_hops() {
+        assert_tls_hops_fail_http_hops_pass(|o| {
+            o.cert = Some("garbage".into());
+            o.key = Some(BAD_PEM.into());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn non_pem_roots_are_an_empty_trust_set() {
+        assert_tls_hops_fail_http_hops_pass(|o| o.roots = Some(vec!["not a pem".into()])).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn socket_path_carries_the_request_and_ignores_the_proxy() {
+        use std::os::unix::net::UnixListener;
+        let path = std::env::temp_dir().join(format!("wait-on-http-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let n = s.read(&mut buf).unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            let _ = s.write_all(OK.as_bytes());
+        });
+        let dead_proxy = format!("http://127.0.0.1:{}", closed_port());
+        let c = with("http://localhost/ready".into(), |o| {
+            o.socket_path = Some(path.to_string_lossy().into_owned());
+            o.proxy = Some(dead_proxy);
+        })
+        .unwrap();
+        let out = c.check(None::<NoValidate>).await;
+        let _ = std::fs::remove_file(&path);
+        assert!(out.ok, "{out:?}");
+        let head = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(head.starts_with("GET /ready "), "{head}");
+        assert!(head.contains("host: localhost\r\n"), "{head}");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn socket_path_carries_the_request_over_a_named_pipe() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let path = format!(r"\\.\pipe\wait-on-http-{}", std::process::id());
+        let mut server = tokio::net::windows::named_pipe::ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&path)
+            .unwrap();
+        let served = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = server.read(&mut buf).await.unwrap();
+            server.write_all(OK.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        let c = with("http://localhost/ready".into(), |o| {
+            o.socket_path = Some(path.clone())
+        })
+        .unwrap();
+        let out = c.check(None::<NoValidate>).await;
+        assert!(out.ok, "{out:?}");
+        assert!(served.await.unwrap().starts_with("GET /ready "));
+    }
+
+    #[tokio::test]
+    async fn missing_socket_path_is_not_ready() {
+        #[cfg(unix)]
+        let path = std::env::temp_dir()
+            .join(format!("wait-on-http-missing-{}.sock", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        #[cfg(windows)]
+        let path = format!(r"\\.\pipe\wait-on-http-missing-{}", std::process::id());
+        let c = with("http://localhost/".into(), |o| o.socket_path = Some(path)).unwrap();
+        let out = c.check(None::<NoValidate>).await;
+        assert!(!out.ok, "{out:?}");
+        assert!(out.error.is_some(), "{out:?}");
     }
 
     #[tokio::test]
