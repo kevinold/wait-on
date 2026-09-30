@@ -20,6 +20,7 @@ const counting = require('./fixtures/counting-addon');
 const { routesHttpToRust } = waitOn._internal;
 
 const { withEnv, runCLI: runCLIWith } = require('./helpers/engine-env');
+const tlsFixture = require('./helpers/tls-fixture');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
@@ -301,28 +302,18 @@ describe('engine selection', function () {
     const RUST = { WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: COUNTING_ADDON, ...NO_PROXY_ENV };
     const FAST = { timeout: 2000, interval: 100 };
     const closers = [];
-    let certDir;
+    let fx;
     let cert;
     let key;
 
     before(function () {
       this.timeout(30000);
-      try {
-        childProcess.execSync('openssl version', { stdio: 'ignore' });
-      } catch {
-        return; // https cells skip below
-      }
-      certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-route-'));
-      childProcess.execSync(
-        `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout ${certDir}/key.pem -out ${certDir}/cert.pem -days 1 -nodes -subj "/CN=localhost"`,
-        { stdio: 'ignore' }
-      );
-      key = fs.readFileSync(path.join(certDir, 'key.pem'));
-      cert = fs.readFileSync(path.join(certDir, 'cert.pem'));
+      fx = tlsFixture();
+      if (fx) ({ key, cert } = fx); // else https cells skip below
     });
 
     after(function () {
-      if (certDir) fs.rmSync(certDir, { recursive: true, force: true });
+      if (fx) fx.cleanup();
     });
 
     beforeEach(function () {

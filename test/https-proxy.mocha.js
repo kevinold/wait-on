@@ -6,12 +6,12 @@
 // share fixed ports with the rest of the suite.
 
 const waitOn = require('../');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const http = require('http');
 const https = require('https');
-const { execSync } = require('child_process');
+const crypto = require('crypto');
+const net = require('net');
+const tlsFixture = require('./helpers/tls-fixture');
+const stubProxy = require('./helpers/stub-proxy');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -43,34 +43,22 @@ function listenHttp(handler, cb) {
 describe('https/tls and proxy parity', function () {
   this.timeout(6000);
 
-  let certDir;
+  let fx;
   let key;
   let cert;
 
   before(function () {
     // Cert generation shells out to openssl; on slow Windows CI runners this can
     // exceed the suite's tight per-test timeout, so give the one-time setup its
-    // own generous budget (the EC keygen below is near-instant — belt-and-suspenders).
+    // own generous budget (the EC keygen is near-instant — belt-and-suspenders).
     this.timeout(30000);
-    try {
-      execSync('openssl version', { stdio: 'ignore' });
-    } catch {
-      this.skip(); // openssl not available in this environment
-    }
-    certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-tls-'));
-    // EC P-256 (prime256v1): constant-time keygen, no RSA prime search — that
-    // search made this hook intermittently exceed 6000ms on Windows. Node TLS
-    // accepts EC self-signed certs, so every assertion below is unchanged.
-    execSync(
-      `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout ${certDir}/key.pem -out ${certDir}/cert.pem -days 1 -nodes -subj "/CN=localhost"`,
-      { stdio: 'ignore' }
-    );
-    key = fs.readFileSync(path.join(certDir, 'key.pem'));
-    cert = fs.readFileSync(path.join(certDir, 'cert.pem'));
+    fx = tlsFixture();
+    if (!fx) this.skip(); // openssl not available in this environment
+    ({ key, cert } = fx);
   });
 
   after(function () {
-    fs.rmSync(certDir, { recursive: true, force: true });
+    if (fx) fx.cleanup();
   });
 
   afterEach(closeServers);
@@ -81,10 +69,7 @@ describe('https/tls and proxy parity', function () {
     server.listen(0, 'localhost', () => cb(server.address().port));
   }
 
-  // Windows has no Unix domain sockets; Node listens on named pipes instead.
-  function socketPathFor(name) {
-    return process.platform === 'win32' ? path.join('\\\\?\\pipe', certDir, name) : path.join(certDir, name);
-  }
+  const socketPathFor = (name) => fx.socketPathFor(name);
 
   it('should fail an https self-signed cert when strictSSL is true', function (done) {
     listenHttps((req, res) => { res.end('ok'); }, function (port) {
@@ -358,6 +343,94 @@ describe('plain http auth, headers and validateStatus parity', function () {
         expect(err).to.not.be.ok;
         done();
       });
+    });
+  });
+});
+
+// Self-checks for the shared test helpers (KTD6, KTD8).
+describe('test helpers: tls fixture and stub proxy', function () {
+  this.timeout(30000);
+
+  describe('tls fixture', function () {
+    let fx;
+    before(function () {
+      fx = tlsFixture();
+      if (!fx) this.skip(); // openssl not available in this environment
+    });
+    after(function () {
+      if (fx) fx.cleanup();
+    });
+
+    it('should issue a leaf with a localhost SAN that is not a CA', function () {
+      const x509 = new crypto.X509Certificate(fx.cert);
+      expect(x509.subjectAltName).to.include('DNS:localhost');
+      expect(x509.ca).to.equal(false);
+    });
+
+    it('should issue an unrelated second leaf', function () {
+      const fp = (pem) => new crypto.X509Certificate(pem).fingerprint256;
+      expect(fp(fx.otherCert)).to.not.equal(fp(fx.cert));
+    });
+
+    it('should encrypt the key so it opens only with the passphrase', function () {
+      expect(crypto.createPrivateKey({ key: fx.encryptedKey, passphrase: fx.passphrase }).asymmetricKeyType).to.equal('ec');
+      expect(() => crypto.createPrivateKey(fx.encryptedKey)).to.throw();
+    });
+  });
+
+  describe('stub proxy', function () {
+    let proxy;
+    afterEach(async function () {
+      if (proxy) await proxy.close();
+      proxy = undefined;
+      await new Promise((resolve) => closeServers(resolve));
+    });
+
+    const listenTarget = () => new Promise((resolve) => listenHttp((req, res) => res.end('hit ' + req.url), resolve));
+
+    it('should forward an absolute-form request and record it', async function () {
+      const port = await listenTarget();
+      proxy = await stubProxy.start();
+      const proxyPort = new URL(proxy.url).port;
+      const body = await new Promise((resolve, reject) => {
+        const headers = { 'proxy-authorization': 'Basic dTpw' };
+        http
+          .get({ host: '127.0.0.1', port: proxyPort, path: `http://localhost:${port}/x`, headers }, (res) => {
+            let data = '';
+            res.on('data', (c) => (data += c));
+            res.on('end', () => resolve(data));
+          })
+          .on('error', reject);
+      });
+      expect(body).to.equal('hit /x');
+      expect(proxy.requests).to.deep.equal([{ line: `GET http://localhost:${port}/x`, proxyAuthorization: 'Basic dTpw' }]);
+      expect(proxy.connects).to.have.length(0);
+    });
+
+    it('should tunnel a raw CONNECT and record it', async function () {
+      const port = await listenTarget();
+      proxy = await stubProxy.start();
+      const proxyPort = new URL(proxy.url).port;
+      const reply = await new Promise((resolve, reject) => {
+        const sock = net.connect(proxyPort, '127.0.0.1', () => {
+          sock.write(`CONNECT localhost:${port} HTTP/1.1\r\nHost: localhost:${port}\r\n\r\n`);
+        });
+        let data = '';
+        let sent = false;
+        sock.on('data', (c) => {
+          data += c;
+          if (!sent && data.includes('\r\n\r\n')) {
+            sent = true;
+            sock.write('GET /t HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
+          }
+        });
+        sock.on('end', () => resolve(data));
+        sock.on('error', reject);
+      });
+      expect(reply).to.match(/^HTTP\/1\.1 200 /);
+      expect(reply).to.include('hit /t');
+      expect(proxy.connects).to.deep.equal([{ line: `CONNECT localhost:${port}`, proxyAuthorization: undefined }]);
+      expect(proxy.requests).to.have.length(0);
     });
   });
 });
