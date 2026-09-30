@@ -192,3 +192,5 @@ Matrix coverage (engine x mode x prefix):
 ## Resume notes
 
 <!-- Lane L3 notes only. Append below; never edit the spine plan or sibling lane plans. -->
+
+- 2026-09-30: U1-U3 implemented on `rs-55-file`. `npm test` 331 passing; `npm run ci:rs` 331 passing, 0 pending under `rust-strict` (darwin-arm64). Deviation: the fixture gained `fileSize` before routing landed, so L1's fixture tests never went transiently red (same end state). T5 seen red by a temporary selector inversion. Cross-model review passes were not run (egress to codex denied by the session permission classifier); local adversarial reviews covered the lens. `origin/spike-next-rs` had no new commits at PR time; re-merge if L2 lands first.
