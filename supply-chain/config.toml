@@ -12,6 +12,7 @@ url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audit
 
 [imports.google]
 url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+exclude = ["quote"]
 
 [imports.isrg]
 url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/audits.toml"
@@ -314,6 +315,11 @@ notes = "Newer than the imported audit of 0.1.4; the diff is not yet audited."
 version = "1.0.107"
 criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 1.0.106; the diff is not yet audited."
+
+[[exemptions.quote]]
+version = "1.0.47"
+criteria = "safe-to-deploy"
+notes = "Google's quote audits are excluded from the import: their notes contain double quotes that cargo-vet 0.10.0 (CI) and 0.10.2 format differently, which fails `cargo vet --locked` on one of them. Not yet audited here."
 
 [[exemptions.reqwest]]
 version = "0.13.5"

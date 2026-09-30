@@ -31,7 +31,9 @@ Lane L11 (#68) bootstrapped the `cargo vet` store (`supply-chain/`) for the Rust
    - `cargo vet diff <crate> <audited> <new>` means a bump past an audited base (63 crates at #68). Note it as "Newer than the imported audit of <audited>".
    - `cargo vet inspect <crate> <version>` means no audited base exists (66 crates).
 
-5. **Prove the gate goes red. A green run does not show it runs.**
+5. **Keep the store format-stable across cargo-vet versions.** CI's `taiki-e/install-action` installed cargo-vet 0.10.0 while the store was written with 0.10.2. The two versions format multi-line `notes` that contain double quotes differently (0.10.0 escapes them as `\"`), so `cargo vet --locked` failed CI with "A file in the store is not correctly formatted" on `imports.lock`. Running `cargo vet fmt` with one version only moves the failure to the other version. The only such note came from Google's audits of `quote`. Fix (#73): `exclude = ["quote"]` under `[imports.google]`, `cargo vet` + `cargo vet prune` to drop those entries from `imports.lock`, and one hand-written `quote` exemption with a reason. Do not use `regenerate exemptions` for this, because it wipes the notes. Check both versions: `cargo vet --locked` and `cargo vet fmt` (no diff) under each. Install the older one with `cargo install cargo-vet --version 0.10.0 --locked --root <dir>` and run it with `<dir>/bin` first on `PATH`. Invoking the binary directly panics ("Cargo failed to set $CARGO"). After this, the store had 18 crates audited and 130 exempted.
+
+6. **Prove the gate goes red. A green run does not show it runs.**
    - Add a scratch unvetted crate, such as `leftpad = "0.2"` in `crates/wait-on-core/Cargo.toml`, and run `cargo fetch`. `cargo update -p leftpad` fails first because the lockfile does not have the crate yet.
    - `cargo vet --locked` exits 255 with `leftpad:0.2.0 missing ["safe-to-deploy"]`.
    - The old `ci:rs` printed `> cargo fmt --all --check` and never vetted. The new one exits 255 before any fmt line.
