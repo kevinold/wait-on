@@ -126,8 +126,10 @@ fn run(mut shell: Command, command: &str, timeout_ms: u32) -> CommandResult {
 
 #[cfg(test)]
 mod tests {
+    use super::run_command;
     use std::fs;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn version_is_workspace_version() {
@@ -194,34 +196,34 @@ mod tests {
         }
     }
 
-    // run_command: per-OS shell builtins so cargo test needs no node.
-    use super::run_command;
-    use std::time::{Duration, Instant};
-
-    #[cfg(unix)]
-    const FAIL3: &str = "exit 3";
-    #[cfg(windows)]
-    const FAIL3: &str = "exit /b 3";
-    #[cfg(unix)]
-    const STDERR_FAIL: &str = "echo boom 1>&2; exit 2";
-    #[cfg(windows)]
-    const STDERR_FAIL: &str = "echo boom 1>&2 && exit /b 2";
-    #[cfg(unix)]
-    const CHAINED: &str = r#"echo "quoted" && exit 0"#;
-    #[cfg(windows)]
-    const CHAINED: &str = r#"echo "quoted" && exit /b 0"#;
-    #[cfg(unix)]
-    const ENV_CHECK: &str = r#"[ "$CARGO_PKG_NAME" = wait-on-core ]"#;
-    #[cfg(windows)]
-    const ENV_CHECK: &str = r#"if "%CARGO_PKG_NAME%"=="wait-on-core" (exit /b 0) else (exit /b 1)"#;
-    #[cfg(unix)]
-    const SLEEP5: &str = "sleep 5";
-    #[cfg(windows)]
-    const SLEEP5: &str = "ping -n 6 127.0.0.1 >nul";
-    #[cfg(unix)]
-    const SLEEP1_ECHO: &str = "sleep 1; echo done";
-    #[cfg(windows)]
-    const SLEEP1_ECHO: &str = "ping -n 2 127.0.0.1 >nul && echo done";
+    // run_command cases use per-OS shell builtins so cargo test needs no node.
+    const WIN: bool = cfg!(windows);
+    const FAIL3: &str = if WIN { "exit /b 3" } else { "exit 3" };
+    const STDERR_FAIL: &str = if WIN {
+        "echo boom 1>&2 && exit /b 2"
+    } else {
+        "echo boom 1>&2; exit 2"
+    };
+    const CHAINED: &str = if WIN {
+        r#"echo "quoted" && exit /b 0"#
+    } else {
+        r#"echo "quoted" && exit 0"#
+    };
+    const ENV_CHECK: &str = if WIN {
+        r#"if "%CARGO_PKG_NAME%"=="wait-on-core" (exit /b 0) else (exit /b 1)"#
+    } else {
+        r#"[ "$CARGO_PKG_NAME" = wait-on-core ]"#
+    };
+    const SLEEP5: &str = if WIN {
+        "ping -n 6 127.0.0.1 >nul"
+    } else {
+        "sleep 5"
+    };
+    const SLEEP1_ECHO: &str = if WIN {
+        "ping -n 2 127.0.0.1 >nul && echo done"
+    } else {
+        "sleep 1; echo done"
+    };
 
     #[test]
     fn run_command_is_ready_with_stdout_when_the_command_exits_0() {
