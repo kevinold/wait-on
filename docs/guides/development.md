@@ -25,8 +25,8 @@ npm test
 | `npm run test:types` | `tsc -p test/tsconfig.json` (type tests for `index.d.ts`) | exists |
 | `npm run test:coverage` | nyc + mocha, thresholds from `.nycrc.json` | exists |
 | `npm run ci:rs` | Rust gate on the host (`scripts/ci-rs.js`): fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict` | exists |
-| `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`scripts/build-napi.js`) | exists; all-target hardening planned (lane L9) |
-| `npm run ci:rs:package` | pack all targets, install-matrix checks, size report | Status: planned (lane L9) |
+| `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`scripts/build-napi.js`) | exists |
+| `npm run ci:rs:package [-- --host-only]` | pack, install-matrix and container checks, size report ([ci.md](ci.md#cirspackage)); `--host-only` needs only the host prebuild | exists |
 
 Hook inputs and outputs: [ci.md](ci.md#npm-script-hook-contract).
 
