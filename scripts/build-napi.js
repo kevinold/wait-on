@@ -60,8 +60,8 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const target = args.target || hostTriple(childProcess.execFileSync('rustc', ['-vV'], { encoding: 'utf8' }));
   const plan = planBuild({ target, extraArgs: args.extraArgs, repoRoot });
-  const cliDir = path.dirname(require.resolve('@napi-rs/cli/package.json'));
-  const napiBin = path.join(cliDir, require('@napi-rs/cli/package.json').bin.napi);
+  const cliPkg = require.resolve('@napi-rs/cli/package.json');
+  const napiBin = path.join(path.dirname(cliPkg), require(cliPkg).bin.napi);
 
   const r = childProcess.spawnSync(process.execPath, [napiBin, ...plan.napiArgs], { cwd: repoRoot, stdio: 'inherit' });
   if (r.status !== 0) process.exit(r.status || 1);

@@ -9,17 +9,12 @@ const pending = [];
 
 const isRust = () => /^rust(-strict)?$/.test(process.env.WAIT_ON_ENGINE || '');
 
-function registeredTitles(suite, titles = new Set()) {
-  suite.tests.forEach((t) => titles.add(t.fullTitle()));
-  suite.suites.forEach((s) => registeredTitles(s, titles));
-  return titles;
-}
-
 function createHooks(list) {
   return {
     beforeAll() {
       if (!isRust()) return;
-      const titles = registeredTitles(this.test.parent);
+      const titles = new Set();
+      this.test.parent.eachTest((t) => titles.add(t.fullTitle()));
       const stale = list.filter((title) => !titles.has(title));
       if (stale.length) {
         throw new Error(`test/rust-pending.js lists tests no suite registers: ${stale.join('; ')}`);

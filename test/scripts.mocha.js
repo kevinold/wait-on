@@ -70,7 +70,7 @@ describe('build:napi', function () {
 });
 
 describe('ci:rs', function () {
-  const repoRoot = path.join('/r');
+  const repoRoot = '/r';
   const mocha = require.resolve('mocha/bin/mocha.js');
 
   it('runs fmt, clippy, test, deny, the host build, then mocha under rust-strict, in that order', function () {

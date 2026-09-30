@@ -26,7 +26,7 @@ function main() {
   const repoRoot = path.join(__dirname, '..');
   for (const { cmd, args, env } of steps({ repoRoot })) {
     console.log(`> ${[path.basename(cmd), ...args].join(' ')}`);
-    const r = childProcess.spawnSync(cmd, args, { cwd: repoRoot, stdio: 'inherit', env: env || process.env });
+    const r = childProcess.spawnSync(cmd, args, { cwd: repoRoot, stdio: 'inherit', env });
     if (r.status !== 0) process.exit(r.status || 1);
   }
 }
