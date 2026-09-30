@@ -35,7 +35,7 @@ Hook inputs and outputs: [ci.md](ci.md#npm-script-hook-contract).
 
 `npm run build:napi` runs `napi build --release` (from `@napi-rs/cli`) on `crates/wait-on-napi` for the rustc host triple, into `target/napi/<dir>/`, then copies the addon to `prebuilds/<dir>/wait-on.node`. `-- --target <triple>` builds one of the eight supported targets; extra args such as `-x` (cross-compile; napi installs `cargo-zigbuild` on first use and needs `zig` on `PATH`) are forwarded to `napi build`. Nothing is written to the repo root. The first build compiles reqwest, rustls and ring (a C compiler is needed for ring; no cmake, NASM or OpenSSL).
 
-`prebuilds/` is not committed, so rebuild the addon after pulling Rust changes. A stale prebuild that lacks a newer export (for example `fileSize`) fails the real-addon tests, which run in plain `npm test` whenever a host prebuild exists, as well as any run under `WAIT_ON_ENGINE=rust*`.
+`prebuilds/` is not committed, so rebuild the addon after pulling Rust changes. A stale prebuild that lacks a newer export (for example `fileSize` or `runCommand`) fails the real-addon tests, which run in plain `npm test` whenever a host prebuild exists, as well as any run under `WAIT_ON_ENGINE=rust*`.
 
 ## Running each engine locally
 
