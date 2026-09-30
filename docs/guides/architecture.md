@@ -24,9 +24,9 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 ## Rust engine layout
 
-Cargo workspace at repo root (`Cargo.toml`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`.
+Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
 
-Status: planned (lane L1)
+The addon exposes `version()` (the crate version) and `noop()`. No resource check runs in Rust yet: under a loaded Rust engine every resource still uses the JS checks.
 
 ## Resource checks in Rust
 
@@ -36,12 +36,19 @@ Status: planned (lane L7)
 
 ## Prebuilds and loader
 
-Prebuilt addons live in `prebuilds/<platform>-<arch>[-musl]/wait-on.node`, loaded by a small hand-written loader in `lib/` (no new runtime dependency).
+Prebuilt addons live in `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (gitignored; shipped via `files` in `package.json`), loaded by the hand-written loader in [`lib/engine.js`](../../lib/engine.js) with a plain `require()` (no new runtime dependency). The directory is `process.platform`-`process.arch`, plus `-musl` on linux when the process report shows no glibc runtime. `npm run build:napi` builds the host addon (see [development.md](development.md#building-the-addon)).
 
-Status: planned (lane L9)
+Status: multi-target prebuilds and the install matrix planned (lane L9)
 
 ## Engine selection and fallback
 
-`WAIT_ON_ENGINE=rust` loads the addon and falls back to JS if it fails to load; `WAIT_ON_ENGINE=rust-strict` makes a load failure an error (for CI). Unset means JS. Public API, CLI, schema, and `index.d.ts` do not change.
+`lib/engine.js` reads `WAIT_ON_ENGINE` on every `waitOn` call, after option and resource validation:
 
-Status: planned (lane L1)
+| Value | Engine | Addon load failure |
+|---|---|---|
+| unset, empty, `js` | JS; the addon is never loaded | n/a |
+| `rust` | Rust addon loaded | silent fallback to JS, no output change |
+| `rust-strict` | Rust addon loaded | `waitOn` rejects / calls back with `WAIT_ON_ENGINE=rust-strict: failed to load the native addon at <path>: <cause>`; the CLI prints it and exits 1 |
+| anything else | none | `WAIT_ON_ENGINE="<v>" is not one of js, rust, rust-strict` (same delivery) |
+
+`WAIT_ON_NATIVE_LIBRARY_PATH` (absolute path) overrides the addon location. It is a dev/test hook, not a public option; wait-on does not reuse napi-rs's global `NAPI_RS_NATIVE_LIBRARY_PATH` so it cannot pick up another package's addon. Public API, CLI, schema, and `index.d.ts` do not change.
