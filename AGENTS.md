@@ -19,6 +19,14 @@ Two front doors to the same behavior — **keep them in sync**:
   the schema entry *and*, when exposed on the CLI, a flag in `bin/wait-on`, an entry in
   `bin/usage.txt`, and a `README.md` update.
 
+## Two engines
+
+This branch (`spike-next-rs`) is building a Rust engine next to the Node one. The pure-JS
+engine stays the default; the Rust engine is opt-in via `WAIT_ON_ENGINE=rust`, and both
+must pass the same mocha suites. Spine lanes never edit `.github/workflows/`; they change
+CI behavior through the `ci:rs`, `build:napi`, and `ci:rs:package` npm scripts. The
+developer manual is [`docs/guides/README.md`](docs/guides/README.md).
+
 ## Architecture
 
 An rxjs polling pipeline in `lib/wait-on.js`:
@@ -44,8 +52,9 @@ An rxjs polling pipeline in `lib/wait-on.js`:
 - **Validation**: `WAIT_ON_SCHEMA` (joi) defines every option and its default;
   `validateResource` rejects syntactically bad http/tcp resources up front with a clear
   error instead of polling until timeout.
-- **HTTP**: requests go through axios with the http adapter forced
-  (`axios.create({ adapter: 'http' })`), which avoids xhr/jsdom log pollution.
+- **HTTP**: requests go through undici's own `fetch` (not Node's global fetch) with a
+  per-request undici dispatcher (`Agent`, `ProxyAgent`, `EnvHttpProxyAgent`) that carries
+  TLS options and proxy settings.
 
 **Add a new resource type:** extend `PREFIX_RE`, add a `case` in the `createResource$`
 switch, write a `create<Type>$` factory following the existing
@@ -55,23 +64,19 @@ has syntax worth failing fast on.
 
 ## Stack
 
-- Node `>=20`, plain CommonJS (`"type": "commonjs"`, `'use strict'`), no build step.
-- Runtime deps (current on master): `axios` (http), `rxjs` (polling/merge), `joi`
-  (`WAIT_ON_SCHEMA`), `lodash` (via `lodash/fp`).
+- Node `>=22.19.0`, plain CommonJS (`"type": "commonjs"`, `'use strict'`), no build step.
+- Runtime deps: `undici` (http), `rxjs` (polling/merge), `joi` (`WAIT_ON_SCHEMA`).
 - CLI args are parsed with Node's built-in `util.parseArgs` (minimist was removed, #233).
-- **Upcoming:** jeffbski/wait-on#238 raises the engines floor to `>=22.19` and #238/#239
-  propose dropping `axios`/`lodash`. Describe the current state above; do not assume those
-  have merged.
 
 ## Commands
 
-- `npm test` — the full check: `npm run lint && npm run test:mocha`.
+- `npm test` — the full check: `npm run lint && npm run test:types && npm run test:mocha`.
 - `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `bin/wait-on`
   (flat config `eslint.config.mjs`).
 - `npm run test:mocha` — `mocha --exit "test/**/*.mocha.js"` (`--exit` is required: spun-up
   test servers leave open handles).
 - `npm run test:coverage` — nyc + mocha.
-- Node engines floor is `>=20.0.0` on master.
+- Node engines floor is `>=22.19.0`.
 
 ## Conventions
 
@@ -80,7 +85,7 @@ has syntax worth failing fast on.
   `validation.mocha.js`); shared fixtures `test/config-http-resources.js` and
   `test/config-headers.js`. How to write them: see
   [Test-Driven Development](#test-driven-development-mandatory).
-- CI runs on **ubuntu + windows** (matrix node 20/22/24, `npm ci --engine-strict`). No
+- CI runs on **ubuntu + windows** (matrix node 22/24/26, `npm ci --engine-strict`). No
   POSIX-only assumptions: mind Windows named pipes and path separators, and don't rely on
   unix-only tooling (e.g. `openssl speed`) or shell.
 - Conventional Commit messages (semantic-release + commitlint are proposed in #241).
