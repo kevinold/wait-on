@@ -2,12 +2,17 @@
 
 // Pure planning functions behind the build:napi and ci:rs npm scripts.
 
+const childProcess = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { describe, it } = require('mocha');
 const { expect } = require('chai');
 
 const buildNapi = require('../scripts/build-napi');
 const ciRs = require('../scripts/ci-rs');
+const ciRsPackage = require('../scripts/ci-rs-package');
+const { prebuildDir, isMusl } = require('../lib/engine');
 
 describe('build:napi', function () {
   const triples = {
@@ -90,5 +95,127 @@ describe('ci:rs', function () {
     for (const step of ciRs.steps({ repoRoot })) {
       if (step.cmd !== 'cargo') expect(step.cmd).to.equal(process.execPath);
     }
+  });
+});
+
+describe('ci:rs:package', function () {
+  this.timeout(15000); // real npm pack and probe subprocesses; Windows needs headroom
+
+  const PO4 = [
+    'darwin-arm64',
+    'darwin-x64',
+    'linux-x64',
+    'linux-arm64',
+    'linux-x64-musl',
+    'linux-arm64-musl',
+    'win32-x64',
+    'win32-arm64'
+  ];
+  const hostDir = prebuildDir({
+    platform: process.platform,
+    arch: process.arch,
+    musl: isMusl({ platform: process.platform, report: process.report.getReport.bind(process.report) })
+  });
+
+  function tmp() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-pkg-'));
+  }
+
+  function touch(root, rel, body = 'x') {
+    const file = path.join(root, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body);
+  }
+
+  it('should list exactly the eight PO4 prebuild dirs from the build target table', function () {
+    expect(Object.keys(buildNapi.TARGETS)).to.have.length(8);
+    expect(ciRsPackage.expectedPrebuildDirs()).to.deep.equal(PO4);
+  });
+
+  it('should name every missing prebuild dir', function () {
+    const root = tmp();
+    for (const dir of ['darwin-x64', 'linux-x64-musl', 'win32-arm64']) touch(root, `${dir}/wait-on.node`);
+    const missing = ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: PO4 });
+    expect(missing).to.deep.equal(['darwin-arm64', 'linux-x64', 'linux-arm64', 'linux-arm64-musl', 'win32-x64']);
+    const message = ciRsPackage.formatMissing(missing);
+    for (const dir of missing) expect(message).to.include(`prebuilds/${dir}/wait-on.node`);
+  });
+
+  it('should pass with all eight prebuilds present', function () {
+    const root = tmp();
+    for (const dir of PO4) touch(root, `${dir}/wait-on.node`);
+    expect(ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: PO4 })).to.deep.equal([]);
+  });
+
+  it('should require only the host dir under host-only', function () {
+    const root = tmp();
+    touch(root, `${hostDir}/wait-on.node`);
+    expect(ciRsPackage.requiredDirs({ hostOnly: true })).to.deep.equal([hostDir]);
+    const hostOnly = ciRsPackage.requiredDirs({ hostOnly: true });
+    expect(ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: hostOnly })).to.deep.equal([]);
+    const all = ciRsPackage.requiredDirs({ hostOnly: false });
+    expect(ciRsPackage.missingPrebuilds({ prebuildsRoot: root, dirs: all })).to.not.be.empty;
+  });
+
+  it('should pack every prebuild and no build intermediates', function () {
+    if (!process.env.npm_execpath) this.skip(); // needs npm; set when run through npm run
+    const root = tmp();
+    fs.copyFileSync(path.join(__dirname, '..', 'package.json'), path.join(root, 'package.json'));
+    for (const rel of ['lib/wait-on.js', 'bin/wait-on', 'exampleConfig.js', 'index.d.ts']) touch(root, rel);
+    for (const dir of PO4) touch(root, `prebuilds/${dir}/wait-on.node`);
+    for (const rel of ['target/x', 'crates/x', 'scripts/prebuild-probe.js', 'docs/x', 'test/x', 'benchmarks/x', 'Cargo.toml']) {
+      touch(root, rel);
+    }
+    const out = childProcess.execFileSync(process.execPath, [process.env.npm_execpath, 'pack', '--dry-run', '--json'], {
+      cwd: root,
+      encoding: 'utf8'
+    });
+    const packJson = JSON.parse(out)[0];
+    expect(ciRsPackage.checkPack(packJson, PO4)).to.deep.equal([]);
+    const paths = packJson.files.map((f) => f.path);
+    for (const dir of PO4) expect(paths).to.include(`prebuilds/${dir}/wait-on.node`);
+    expect(paths.filter((p) => /^(target|crates|scripts|docs|test|benchmarks)\/|^Cargo/.test(p))).to.deep.equal([]);
+  });
+
+  it('should fail the pack check when a prebuild is missing or an intermediate ships', function () {
+    const files = PO4.filter((d) => d !== 'win32-x64')
+      .map((d) => ({ path: `prebuilds/${d}/wait-on.node`, size: 1 }))
+      .concat({ path: 'scripts/prebuild-probe.js', size: 1 });
+    const problems = ciRsPackage.checkPack({ files }, PO4).join('\n');
+    expect(problems).to.include('prebuilds/win32-x64/wait-on.node');
+    expect(problems).to.include('scripts/prebuild-probe.js');
+  });
+
+  it("should reject a manifest with lifecycle scripts or optionalDependencies and accept the repo's", function () {
+    expect(ciRsPackage.checkManifest({ scripts: { postinstall: 'x' } }).join('\n')).to.include('postinstall');
+    expect(ciRsPackage.checkManifest({ scripts: { prepare: 'x' } }).join('\n')).to.include('prepare');
+    expect(ciRsPackage.checkManifest({ optionalDependencies: {} }).join('\n')).to.include('optionalDependencies');
+    expect(ciRsPackage.checkManifest(require('../package.json'))).to.deep.equal([]);
+  });
+
+  it('should report packed, unpacked, js-only and per-target sizes', function () {
+    const files = PO4.map((d) => ({ path: `prebuilds/${d}/wait-on.node`, size: 600000 })).concat(
+      { path: 'lib/wait-on.js', size: 150000 },
+      { path: 'package.json', size: 50000 }
+    );
+    expect(ciRsPackage.sizeReport({ size: 700000, unpackedSize: 5000000, files })).to.deep.equal({
+      packed: 700000,
+      unpacked: 5000000,
+      jsOnlyUnpacked: 200000,
+      targets: PO4.map((dir) => ({ dir, size: 600000 }))
+    });
+  });
+
+  it('should write a sha256sum-compatible line', function () {
+    const file = path.join(tmp(), 'wait-on-1.0.0.tgz');
+    fs.writeFileSync(file, 'abc');
+    expect(ciRsPackage.sha256sumsLine(file)).to.equal(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  wait-on-1.0.0.tgz\n'
+    );
+  });
+
+  it('should parse --host-only', function () {
+    expect(ciRsPackage.parseArgs(['--host-only'])).to.deep.equal({ hostOnly: true });
+    expect(ciRsPackage.parseArgs([])).to.deep.equal({ hostOnly: false });
   });
 });
