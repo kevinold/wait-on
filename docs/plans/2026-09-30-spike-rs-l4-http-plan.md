@@ -398,3 +398,8 @@ Per unit:
 ## Resume notes
 
 <!-- Lane worker notes go here only. -->
+
+- 2026-09-30: U1-U6 landed. `test/rust-pending.js` stayed `[]` (nothing to shrink). U4 RED confirmed: with `checker.cancel()` removed from `finalize`, the rust-strict child hung until the 5 s budget.
+- Parity deltas recorded in `docs/guides/architecture.md`: default request headers, rustls TLS suite surface, `httpTimeout` > 2^31-1 (JS `AbortSignal.timeout` overflows; Rust clamps to 2^32-1).
+- Benchmark also isolates the bare FFI call (`addon.noop()`, ~14 ns) per a review proposal, alongside end-to-end http timing.
+- Existing `itFrozen` http tests cannot prove the Rust path (frozen pump outruns the cross-thread check); Rust-path proof uses real-clock tests with the counting fixture.

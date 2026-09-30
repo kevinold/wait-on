@@ -26,13 +26,54 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
 
-The addon exposes `version()` (the crate version) and `noop()`. No resource check runs in Rust yet: under a loaded Rust engine every resource still uses the JS checks.
+The addon exposes `version()` (the crate version), `noop()`, and the resource checks listed below. Resources whose check has not moved yet still use the JS checks under a loaded Rust engine.
 
 ## Resource checks in Rust
 
 Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7).
 
 Status: planned (lane L7)
+
+### http(s) (L4)
+
+`http:`/`https:` (HEAD) and `http-get:`/`https-get:` (GET) run in Rust when the Rust engine is loaded and no L5 condition holds. `createHTTP$` decides once per resource with `routesHttpToRust` ([`lib/wait-on.js`](../../lib/wait-on.js)):
+
+| Condition on validated options and env | Check |
+|---|---|
+| Addon not loaded (`js`, or `rust` with load failure) | JS (undici) |
+| `http://unix:` socket path | JS (L5) |
+| Any of `ca`, `cert`, `key`, `passphrase` | JS (L5) |
+| `strictSSL: true` | JS (L5) |
+| `proxy` set (object or `false`) | JS (L5) |
+| `HTTP_PROXY` / `http_proxy` / `HTTPS_PROXY` / `https_proxy` set | JS (L5) |
+| Otherwise: plain http, and https with the default `strictSSL: false` | Rust |
+
+- **Checker.** `crates/wait-on-core/src/http.rs` holds `HttpChecker`: one reqwest `Client` per resource (rustls with the `ring` provider, no OpenSSL, `no_proxy()`, invalid certs accepted), mirroring the one undici dispatcher per resource on the JS path. `followRedirect: true` maps to `redirect::Policy::limited(20)`, `false` to `Policy::none()` so the 3xx is the status checked. `httpTimeout` becomes a whole-request timeout covering the GET body; unset means none. GET reads the body only when the status passed.
+- **Binding.** `crates/wait-on-napi/src/http.rs` exposes `new HttpChecker({ url, method, headers, followRedirect, timeoutMs })`, `check(validateStatus?)` (a Promise of `{ ok, status?, statusText?, error? }` that never rejects for not-ready) and `cancel()`.
+- **`validateStatus` across the boundary.** JS wraps the user function as `s => Boolean(fn(s))` with a throw mapped to `false`, then passes it as a napi `ThreadsafeFunction` (`CalleeHandled = false`, weak). Rust calls it with `call_async_catch`, so a JS throw or non-boolean is an `Err` (not ready), never a fatal exception. The JS thread is free while it awaits the check Promise, so callbacks from concurrent checks under `simultaneous` do not deadlock.
+- **Headers and auth.** JS builds the final header map (the `auth` Basic header and its case-insensitive override) for both engines and passes string values (`String(v)`); Rust sets them verbatim.
+- **Teardown.** `finalize` calls `checker.cancel()`, a tokio `watch` flag: every in-flight check and any later one resolves `{ ok: false, error: 'cancelled' }`. Without it a pending Promise to a hung server would keep an API caller's process alive after `waitOn` settles (`test/engine.mocha.js`, process lifetime).
+- `reverse` is still applied in JS (`negateAsync`) to the addon's un-negated `ok`.
+
+Deliberate JS vs Rust differences on the Rust path:
+
+- Default request headers: undici sends `user-agent: undici`, `accept-language`, `sec-fetch-mode`; reqwest sends `accept: */*` only.
+- Redirect hop limit: 20 on both (reqwest `Policy::limited(20)`, undici fetch's limit).
+- TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout`.
+- `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.
+
+**Per-check overhead** (`node benchmarks/http-ffi.js --iterations 200`; darwin arm64, Node v26.3.1). Per-call rows time a full `waitOn` against a ready local server (one new checker and connection each); `steady` rows time the gap between polls on one resource (connection reuse); `ffi noop` is the bare boundary (`addon.noop()`, mean of 1000 calls).
+
+| configuration | median ms | p95 ms |
+|---|---|---|
+| js | 1.959 | 3.181 |
+| js steady | 1.497 | 1.779 |
+| rust-strict | 1.494 | 1.697 |
+| rust-strict + validateStatus | 1.556 | 1.735 |
+| rust-strict steady | 1.272 | 1.382 |
+| rust-strict ffi noop | 0.000014 | 0.000020 |
+
+The bare FFI call is about 14 ns, and the `validateStatus` threadsafe round trip adds about 0.06 ms per check. The Rust check is not slower than the JS check on this host. L8 owns the regression threshold.
 
 ## Prebuilds and loader
 
