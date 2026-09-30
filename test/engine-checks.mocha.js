@@ -7,10 +7,11 @@
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const { describe, it, beforeEach } = require('mocha');
+const { describe, it, beforeEach, before } = require('mocha');
 const { expect } = require('chai');
 
 const waitOn = require('../lib/wait-on');
+const { resolveEngine, addonPath } = require('../lib/engine');
 const { withEnv, runCLI } = require('./helpers/engine-env');
 const { getFreePort, socketPathIn, tempDir, listening } = require('./helpers/cli-conformance');
 
@@ -158,5 +159,89 @@ describe('addon checks (fixture)', function () {
       withEnv({ WAIT_ON_ENGINE: 'js', WAIT_ON_NATIVE_LIBRARY_PATH: CHECKS_ADDON }, () => waitOn({ ...FAST, resources }))
     );
     expect(fixture.calls).to.deep.equal([]);
+  });
+});
+
+// The built host addon (npm run build:napi). Skips only when no prebuild exists; ci:rs
+// always builds one first, so this never skips there.
+describe('addon checks (real addon)', function () {
+  this.timeout(10000);
+  const REAL = { WAIT_ON_ENGINE: 'rust-strict' };
+
+  before(function () {
+    if (!fs.existsSync(addonPath({}))) this.skip();
+  });
+
+  // Wrap addon[name] on the cached module object the dispatch uses; record each result.
+  async function spyOn(name, fn) {
+    const { addon } = resolveEngine(REAL);
+    const orig = addon[name];
+    expect(orig, `addon.${name}`).to.be.a('function');
+    const results = [];
+    addon[name] = async (...args) => {
+      const r = await orig(...args);
+      results.push(r);
+      return r;
+    };
+    try {
+      await fn();
+    } finally {
+      addon[name] = orig;
+    }
+    return results;
+  }
+
+  async function rejection(opts) {
+    const start = Date.now();
+    let err;
+    await withEnv(REAL, () => waitOn(opts)).catch((e) => (err = e));
+    return { err, elapsed: Date.now() - start };
+  }
+
+  it('should answer a tcp check from the Rust addon', async function () {
+    const server = await listening(net.createServer(), 0, '127.0.0.1');
+    try {
+      const resources = [`tcp:127.0.0.1:${server.address().port}`];
+      const results = await spyOn('tcpCheck', () => withEnv(REAL, () => waitOn({ ...FAST, resources })));
+      expect(results).to.have.length.of.at.least(1);
+      expect(results[results.length - 1]).to.deep.equal({ ready: true, timedOut: false, reason: null });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('should answer a socket check from the Rust addon', async function () {
+    const socketPath = socketPathIn(tempDir());
+    const server = await listening(net.createServer(), socketPath);
+    try {
+      const resources = [`socket:${socketPath}`];
+      const results = await spyOn('socketCheck', () => withEnv(REAL, () => waitOn({ ...FAST, resources })));
+      expect(results).to.have.length.of.at.least(1);
+      expect(results[results.length - 1]).to.deep.equal({ ready: true, timedOut: false, reason: null });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('should report a Rust reason for a port nothing listens on (CLI)', async function () {
+    const port = await getFreePort();
+    const r = runCLI(REAL, ['--verbose', '--tcpTimeout', '5000', '-t', '4000', `tcp:127.0.0.1:${port}`]);
+    expect(r.code).to.not.equal(0);
+    expect(r.stdout).to.include(`error connecting to TCP host:127.0.0.1 port:${port}`);
+    expect(r.stdout).to.include('(os error');
+  });
+
+  it('should mark a tcp check timed out at tcpTimeout with the Rust addon', async function () {
+    const { err, elapsed } = await rejection({ resources: ['tcp:10.255.255.1:9'], tcpTimeout: 200, timeout: 600 });
+    expect(err).to.be.an('error');
+    expect(err.message).to.include('Timed out');
+    expect(elapsed).to.be.below(1500);
+  });
+
+  it('should fire the overall timeout while a Rust connect is pending', async function () {
+    const { err, elapsed } = await rejection({ resources: ['tcp:10.255.255.1:9'], tcpTimeout: 30000, timeout: 500 });
+    expect(err).to.be.an('error');
+    expect(err.message).to.include('Timed out');
+    expect(elapsed).to.be.below(2000);
   });
 });

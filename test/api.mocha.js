@@ -230,6 +230,37 @@ describe('api', function () {
     });
   });
 
+  // Engine parity cells (#54): run under JS in npm test and against the Rust addon in ci:rs.
+  function listenOn(host) {
+    httpServer = http.createServer();
+    return new Promise((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(0, host, () => resolve(httpServer.address().port));
+    });
+  }
+
+  it('should succeed when a service is listening on a bare tcp port', async function () {
+    const port = await listenOn('localhost');
+    await waitOn({ resources: [`tcp:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed for localhost against an IPv4-only listener', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:localhost:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed with tcpTimeout 0 against a listening port', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:127.0.0.1:${port}`], tcpTimeout: 0, timeout: 2000 });
+  });
+
+  it('should succeed in reverse mode when nothing listens on the socket path', function (done) {
+    temp.mkdir({}, function (err, dirPath) {
+      if (err) return done(err);
+      waitOn({ resources: ['socket:' + socketPathIn(dirPath)], reverse: true, timeout: 2000 }, done);
+    });
+  });
+
   // #61: waitOn accepts a string or string array as the opts.resources shorthand.
   describe('string/array opts shorthand (#61)', function () {
     it('accepts a string, resolving like { resources: [string] } (callback form)', function (done) {
