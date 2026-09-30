@@ -1,0 +1,41 @@
+# Rust engine test prerelease on the kevinold/wait-on fork (spike-next-rs).
+# Called by the `prerelease` job in node.js.yml after build, rust, and package pass
+# for a push to spike-next-rs. It publishes a GitHub prerelease tagged
+# rs-<package version>-<short sha> with the multi-platform tarball and SHA256SUMS.
+# It never publishes to npm. Until a lane defines `ci:rs:package` there is no
+# tarball, so the release step is skipped. See docs/guides/ci.md and releasing.md.
+#
+# workflow_dispatch is inert while this file is absent from the default branch.
+name: RS Prerelease
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prerelease:
+    if: github.repository == 'kevinold/wait-on'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+    # pattern (not name): succeeds with no files when the package artifact is absent.
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: package
+        path: dist
+        merge-multiple: true
+    - name: Create GitHub prerelease
+      if: hashFiles('dist/wait-on-*.tgz') != ''
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        tag="rs-$(node -p "require('./package.json').version")-${GITHUB_SHA::7}"
+        gh release create "$tag" dist/wait-on-*.tgz dist/SHA256SUMS \
+          --prerelease --target "$GITHUB_SHA" --title "$tag" \
+          --notes "Rust engine test build from spike-next-rs@${GITHUB_SHA::7}. Install: npm i <tarball-url>, then set WAIT_ON_ENGINE=rust."
