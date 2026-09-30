@@ -26,3 +26,7 @@ coverage
 # Compound Engineering per-checkout local config
 .compound-engineering/config.local.yaml
 .pi/npm/
+
+# Rust build output and built addons
+target/
+prebuilds/

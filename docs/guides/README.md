@@ -4,7 +4,7 @@ Developer manual for the two-engine repo on the `spike-next-rs` branch. Every sp
 
 ## The model
 
-The pure-JS engine (`lib/wait-on.js`) is the default and stays authoritative. A Rust engine is being built beside it and will be opt-in via `WAIT_ON_ENGINE=rust` (`rust-strict` turns an addon load failure into an error). One contract, two drivers: the existing mocha suites are the parity contract and CI runs them under each engine, with an explicit pending list that shrinks lane by lane. The work lands on `spike-next-rs` as single-PR lanes L1–L10 driven from spine issue `kevinold/wait-on#35`; see the [spine plan](../plans/2026-09-30-1400-feat-spike-next-rs-spine-plan.md). Today only the JS engine exists (package `10.0.0-rc.1`).
+The pure-JS engine (`lib/wait-on.js`) is the default and stays authoritative. A Rust engine is being built beside it, opt-in via `WAIT_ON_ENGINE=rust` (`rust-strict` turns an addon load failure into an error). One contract, two drivers: the existing mocha suites are the parity contract and CI runs them under each engine, with an explicit pending list that shrinks lane by lane. The work lands on `spike-next-rs` as single-PR lanes L1–L10 driven from spine issue `kevinold/wait-on#35`; see the [spine plan](../plans/2026-09-30-1400-feat-spike-next-rs-spine-plan.md). Today the Rust addon loads and answers `version()`, but every resource check still runs in JS (package `10.0.0-rc.1`).
 
 ## Pages
 

@@ -16,12 +16,12 @@ Two files: [`.github/workflows/node.js.yml`](../../.github/workflows/node.js.yml
 
 ## npm script hook contract
 
-CI calls these with `npm run --if-present`; an undefined script is a green no-op. Lanes change CI behavior only by defining them in `package.json`. None exists yet.
+CI calls these with `npm run --if-present`; an undefined script is a green no-op. Lanes change CI behavior only by defining them in `package.json`. `ci:rs` and `build:napi` exist (L1); `ci:rs:package` does not yet.
 
 | Script | Called by | Input | Must produce | Status |
 |---|---|---|---|---|
-| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `npm ci` already done | exit code only; builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict` | Status: planned (lane L1) |
-| `build:napi` | `napi` (8 rows) | `-- --target <triple> [extra-args]` (forwarded to `napi build`; `-x` on musl rows) | the target's addon under `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (uploaded as `prebuilds/**`) | Status: planned (lane L9) |
+| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `npm ci` already done | exit code only; builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict` | exists (L1, `scripts/ci-rs.js`) |
+| `build:napi` | `napi` (8 rows) | `-- --target <triple> [extra-args]` (forwarded to `napi build`; `-x` on musl rows) | the target's addon under `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (uploaded as `prebuilds/**`) | exists (L1, `scripts/build-napi.js`); matrix hardening planned (lane L9) |
 | `ci:rs:package` | `package` | all targets' `prebuilds/**` already downloaded into `prebuilds/` | `wait-on-*.tgz` and `SHA256SUMS` at the repo root; install-matrix checks and size report | Status: planned (lane L9) |
 
 If L9 needs a different `build:napi` argument shape, the `extra-args` matrix column is the one place to adapt, via an operator PR.
