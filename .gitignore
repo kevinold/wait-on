@@ -30,3 +30,7 @@ coverage
 # Rust build output and built addons
 target/
 prebuilds/
+
+# ci:rs:package output
+wait-on-*.tgz
+SHA256SUMS

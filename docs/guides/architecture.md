@@ -88,7 +88,7 @@ The bare FFI call is about 14 ns, and the `validateStatus` threadsafe round trip
 
 Prebuilt addons live in `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (gitignored; shipped via `files` in `package.json`), loaded by the hand-written loader in [`lib/engine.js`](../../lib/engine.js) with a plain `require()` (no new runtime dependency). The directory is `process.platform`-`process.arch`, plus `-musl` on linux when the process report shows no glibc runtime. `npm run build:napi` builds the host addon (see [development.md](development.md#building-the-addon)).
 
-Status: multi-target prebuilds and the install matrix planned (lane L9)
+All eight targets ship in one tarball; `ci:rs:package` proves install and load (see [ci.md](ci.md#cirspackage)). Linux glibc addons need glibc 2.39+ ([releasing.md](releasing.md#rust-test-prereleases-fork)).
 
 ## Engine selection and fallback
 
