@@ -154,9 +154,9 @@ run on Windows `cmd` in CI.
 - **(deferred, answered by CI)** Do all 8 `napi` rows go green with `build:napi` as
   specified, in particular musl rows via `-x`/cargo-zigbuild and `aarch64-pc-windows-msvc`?
   Answered by the PR's `napi` checks. A red row that needs a workflow edit is a stop
-  condition. A red row that the script can fix (e.g. installing `cargo-zigbuild`) is fixed
-  in `scripts/build-napi.js` (test: `test/scripts.mocha.js` "plans a cargo-zigbuild install
-  when -x is given and it is absent").
+  condition. `-x` is forwarded to `napi build`, which auto-installs cargo-zigbuild and
+  sets `-crt-static` for musl targets itself (@napi-rs/cli 3.x); a red row the script can
+  fix is fixed in `scripts/build-napi.js` with its own test.
 - **(deferred, execution-time)** Exact `@napi-rs/cli` v3 flag spellings for output dir and
   disabling JS/d.ts generation. Resolved by reading `napi build --help` during U2; the
   plan only fixes the invariant (output dir under `target/napi/`), guarded by
@@ -205,7 +205,9 @@ run on Windows `cmd` in CI.
   or a `.js` file, so tests point it at (a) a nonexistent path ("poison": proves the
   loader never touched it under `js`, proves fallback under `rust`, proves the error
   under `rust-strict`), (b) a junk file named `wait-on.node` (dlopen failure), and (c)
-  `test/fixtures/fake-addon.js` exporting `{ version, noop }` (the load-success branch on
+  `test/fixtures/fake-addon.js` (passed as an absolute path — the override is used
+  verbatim and `require()` treats a relative path as a bare package name) exporting
+  `{ version, noop }` (the load-success branch on
   every platform, which keeps `.nycrc.json` thresholds met without a native build). The
   real addon is exercised by T4 whenever the host prebuild exists (always under `ci:rs`).
   Chosen over a `.nycrc.json` exclusion: the exclusion hides the branch, the fixture runs it.
@@ -234,9 +236,9 @@ run on Windows `cmd` in CI.
   `--manifest-path crates/wait-on-napi/Cargo.toml`, `--output-dir <abs target/napi/<dir>>`,
   `--target <triple>` and forwarded extra args, then copies the single `*.node` from that
   dir to `prebuilds/<dir>/wait-on.node`. Any generated `index.js`/`index.d.ts` lands under
-  `target/` (gitignored). When `-x` is passed and `cargo zigbuild --version` fails, it runs
-  `cargo install cargo-zigbuild --locked` first (CI installs zig only; workflows cannot
-  change). Chosen over plain `cargo build` + copy: R-L1-7 names `@napi-rs/cli`.
+  `target/` (gitignored). Extra args (e.g. `-x`) are forwarded; @napi-rs/cli v3
+  auto-installs cargo-zigbuild and sets `-crt-static` for musl targets, so the script
+  adds no install step. Chosen over plain `cargo build` + copy: R-L1-7 names `@napi-rs/cli`.
 - **KTD8 `ci:rs` = `scripts/ci-rs.js`.** Sequential `spawnSync` with `stdio: 'inherit'`,
   fail on first non-zero: `cargo fmt --all --check`; `cargo clippy --workspace
   --all-targets -- -D warnings`; `cargo test --workspace`; `cargo deny check`;
@@ -319,7 +321,7 @@ or `path.join(__dirname, '..', 'prebuilds', prebuildDir(host), 'wait-on.node')`;
 | Risk | Answered by |
 |---|---|
 | `build:napi` activates 8 `napi` rows; any red row blocks the PR | PR `napi` checks; script-fixable causes go to `scripts/build-napi.js` (+ `test/scripts.mocha.js`); workflow-only causes are a stop condition |
-| musl rows: `-x` needs `cargo-zigbuild`, CI installs zig only | `test/scripts.mocha.js` "plans a cargo-zigbuild install when -x is given and it is absent"; behavior proven by the two musl `napi` rows |
+| musl rows: `-x` needs `cargo-zigbuild`, CI installs zig only | napi CLI auto-installs it on `-x`; `test/scripts.mocha.js` "forwards extra args (-x) to napi"; behavior proven by the two musl `napi` rows |
 | Windows `ci:rs`: env var and spawn without shell | `test/scripts.mocha.js` "uses process.execPath, not npm or a shell, for node steps"; T8 on the `rust` windows row |
 | Coverage: addon-present branch unreachable in the JS run | T4b (fixture addon) runs the success branch on every platform; `npm run test:coverage` meets `.nycrc.json` |
 | `rust-strict` error thrown synchronously would bypass the callback / promise | T3 promise form and T3 callback form both assert the error arrives through `cb(err)` / rejection, never a throw |
@@ -381,7 +383,7 @@ Conventional Commit.
   `require.main === module`: `targetToPrebuild(triple)` (8 CI triples ->
   `{ platform, arch, musl }`, unknown throws listing the supported triples),
   `hostTriple(rustcVVText)` (parses the `host:` line), `planBuild({ target, extraArgs,
-  repoRoot, hasZigbuild })` -> `{ napiArgs, outputDir, prebuildPath, installZigbuild }`.
+  repoRoot })` -> `{ napiArgs, outputDir, prebuildPath }`.
   `main` runs the plan with `spawnSync` (`stdio: 'inherit'`), copies the single `*.node`
   from `outputDir` to `prebuildPath`, fails if zero or several `.node` files are found.
 - **Patterns to follow.** `bin/wait-on` exports its parsers for tests under a
@@ -401,9 +403,7 @@ Conventional Commit.
     `--output-dir` followed by that dir, `--target x86_64-unknown-linux-gnu`, `--release`,
     `--manifest-path` -> `crates/wait-on-napi/Cargo.toml`; `prebuildPath` equals
     `/r/prebuilds/linux-x64/wait-on.node`.
-  - "forwards extra args and plans a cargo-zigbuild install when -x is given and it is
-    absent": `extraArgs: ['-x']`, `hasZigbuild: false` -> `napiArgs` ends with `-x` and
-    `installZigbuild === true`; with `hasZigbuild: true` -> `false`.
+  - "forwards extra args (-x) to napi": `extraArgs: ['-x']` -> `napiArgs` ends with `-x`.
   - "the script file has no side effects on require": requiring `scripts/build-napi.js`
     returns the function map without spawning anything.
 - **Verification.** `npm run build:napi` locally creates `prebuilds/<host>/wait-on.node`;
@@ -454,7 +454,8 @@ Conventional Commit.
     `Cargo.toml` `[workspace.package]`, and `addon.noop()` returns `undefined`. Under
     `ci:rs` this never skips.
   - T4b "should take the addon-present branch with a fixture addon" (API, always runs):
-    `rust-strict` + `WAIT_ON_NATIVE_LIBRARY_PATH=test/fixtures/fake-addon.js`; resolves;
+    `rust-strict` + `WAIT_ON_NATIVE_LIBRARY_PATH` = absolute
+    `path.join(__dirname, 'fixtures', 'fake-addon.js')` (API and CLI); resolves;
     `resolveEngine(env)` returns `engine 'rust'` and `addon.version() === 'fake'`; calling
     twice returns the same `addon` object. Same env under `rust` -> identical result.
     CLI: exit 0 with the fixture path (versus exit 1 with poison in T3).
