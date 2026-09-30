@@ -24,7 +24,8 @@ npm test
 | `npm run test:mocha` | `mocha --exit "test/**/*.mocha.js"` | exists |
 | `npm run test:types` | `tsc -p test/tsconfig.json` (type tests for `index.d.ts`) | exists |
 | `npm run test:coverage` | nyc + mocha, thresholds from `.nycrc.json` | exists |
-| `npm run ci:rs` | Rust gate on the host (`scripts/ci-rs.js`): fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict` | exists |
+| `npm run ci:rs` | Rust gate on the host (`scripts/ci-rs.js`): fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark | exists |
+| `npm run bench:startup [-- --runs N] [--record]` | startup overhead of the Rust engine over JS (`scripts/bench-startup.js`); needs a host prebuild; `--record` rewrites this host's entry in `benchmarks/startup-baseline.json` | exists (L8) |
 | `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`scripts/build-napi.js`) | exists |
 | `node benchmarks/http-ffi.js [--iterations N] [--engines js,rust-strict]` | per-check http overhead, JS vs Rust (Rust rows need a host prebuild) | exists |
 | `npm run ci:rs:package [-- --host-only]` | pack, install-matrix and container checks, size report ([ci.md](ci.md#cirspackage)); `--host-only` needs only the host prebuild | exists |
