@@ -251,6 +251,48 @@ describe('ci:rs:package', function () {
     );
   });
 
+  it('should plan four container cells over glibc and musl with read-only and no network', function () {
+    const cells = ciRsPackage.containerCells({ arch: 'x64' });
+    expect(cells.map((c) => c.name)).to.deep.equal(['glibc-ready', 'glibc-timeout', 'musl-ready', 'musl-timeout']);
+    expect(cells.map((c) => c.image)).to.deep.equal([
+      'node:24-trixie-slim',
+      'node:24-trixie-slim',
+      'node:24-alpine',
+      'node:24-alpine'
+    ]);
+    expect(cells.map((c) => c.expectedDir)).to.deep.equal(['linux-x64', 'linux-x64', 'linux-x64-musl', 'linux-x64-musl']);
+    for (const cell of cells) {
+      const run = cell.runArgs.join(' ');
+      expect(run).to.include('--read-only');
+      expect(run).to.include('--network none');
+      expect(run).to.include('-e WAIT_ON_ENGINE=rust-strict');
+      expect(run).to.include(`${cell.tag} node /app/prebuild-probe.js`);
+      expect(cell.npmrc).to.equal('ignore-scripts=true\n');
+      expect(cell.dockerfile).to.include(`FROM ${cell.image}`);
+      expect(cell.dockerfile).to.include('prebuild-probe.js');
+      expect(cell.dockerfile).to.include('--omit=optional');
+    }
+    expect(cells.filter((c) => c.expectReady).map((c) => c.name)).to.deep.equal(['glibc-ready', 'musl-ready']);
+    for (const cell of cells.filter((c) => !c.expectReady)) {
+      expect(cell.runArgs.slice(-3)).to.deep.equal(['--no-listener', '--timeout', '1000']);
+    }
+  });
+
+  it('should derive the container dirs from the runner arch', function () {
+    const dirs = ciRsPackage.containerCells({ arch: 'arm64' }).map((c) => c.expectedDir);
+    expect([...new Set(dirs)]).to.deep.equal(['linux-arm64', 'linux-arm64-musl']);
+  });
+
+  it('should skip without docker locally, fail without docker under CI, and run when present', function () {
+    const skip = ciRsPackage.dockerDecision({ dockerFound: false, ci: false });
+    expect(skip.action).to.equal('skip');
+    expect(skip.reason).to.include('docker');
+    expect(skip.reason).to.not.include('\n');
+    expect(ciRsPackage.dockerDecision({ dockerFound: false, ci: true }).action).to.equal('fail');
+    expect(ciRsPackage.dockerDecision({ dockerFound: true, ci: true }).action).to.equal('run');
+    expect(ciRsPackage.dockerDecision({ dockerFound: true, ci: false }).action).to.equal('run');
+  });
+
   describe('prebuild-probe', function () {
     const REPO = path.join(__dirname, '..');
     const PROBE = path.join(REPO, 'scripts', 'prebuild-probe.js');

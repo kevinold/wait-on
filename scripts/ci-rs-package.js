@@ -4,7 +4,8 @@
 // The CI `package` job's hook: with every target's prebuild downloaded into prebuilds/, refuse a
 // partial bundle, npm pack once, check the tarball's files and manifest, print sizes, write
 // SHA256SUMS next to wait-on-*.tgz, then install the tarball (npm, npm --omit=optional, pnpm; scripts
-// disabled) and prove each install loads the host addon from inside the installed package.
+// disabled) and prove each install loads the host addon from inside the installed package, then run
+// AE1 in read-only, no-network glibc and musl containers (skipped without docker, except in CI).
 // --host-only (developer runs) requires only the host prebuild.
 // No shell: npm runs as `node $npm_execpath`, so it behaves the same under Windows cmd.
 
@@ -98,6 +99,41 @@ function assertInstalledAddon({ realpath, projectRoot, dir }) {
   }
 }
 
+// AE1: install the tarball at image build time with ignore-scripts=true, then run with a read-only
+// root and no network. The probe serves its own tcp listener inside the container; the timeout
+// cells wait on a closed port so the check must poll and time out.
+function containerCells({ arch }) {
+  const images = [
+    // ponytail: trixie (glibc 2.41) because the gnu addons need GLIBC_2.39 (built on ubuntu-24.04);
+    // lowering that floor is a napi build change, see docs/guides/releasing.md.
+    { libc: 'glibc', image: 'node:24-trixie-slim', expectedDir: `linux-${arch}` },
+    { libc: 'musl', image: 'node:24-alpine', expectedDir: `linux-${arch}-musl` }
+  ];
+  return images.flatMap(({ libc, image, expectedDir }) => {
+    const tag = `wait-on-ae1-${libc}`;
+    const dockerfile = [
+      `FROM ${image}`,
+      'WORKDIR /app',
+      'COPY .npmrc package.json wait-on.tgz prebuild-probe.js ./',
+      'RUN npm install --omit=optional --no-audit --no-fund ./wait-on.tgz',
+      ''
+    ].join('\n');
+    const run = ['run', '--rm', '--read-only', '--network', 'none', '-e', 'WAIT_ON_ENGINE=rust-strict', tag];
+    const probe = ['node', '/app/prebuild-probe.js'];
+    const base = { image, tag, expectedDir, dockerfile, npmrc: 'ignore-scripts=true\n' };
+    return [
+      { ...base, name: `${libc}-ready`, expectReady: true, runArgs: [...run, ...probe] },
+      { ...base, name: `${libc}-timeout`, expectReady: false, runArgs: [...run, ...probe, '--no-listener', '--timeout', '1000'] }
+    ];
+  });
+}
+
+function dockerDecision({ dockerFound, ci }) {
+  if (dockerFound) return { action: 'run' };
+  const reason = 'docker not found: read-only container cells (AE1)';
+  return ci ? { action: 'fail', reason: `${reason} must run in CI` } : { action: 'skip', reason: `${reason} skipped` };
+}
+
 function parseArgs(argv) {
   return { hostOnly: argv.includes('--host-only') };
 }
@@ -152,6 +188,39 @@ function main() {
     console.log(`${cell.name}: loaded ${realpath}`);
     fs.rmSync(project, { recursive: true, force: true });
   }
+
+  const ci = Boolean(process.env.CI);
+  const decision = dockerDecision({ dockerFound: !childProcess.spawnSync('docker', ['--version']).error, ci });
+  if (decision.action === 'fail') fail(decision.reason);
+  if (decision.action === 'skip') return console.log(decision.reason);
+  const cells = containerCells({ arch: process.arch });
+  const unpacked = cells.filter((c) => !packJson.files.some((f) => f.path === `prebuilds/${c.expectedDir}/${ADDON}`));
+  if (unpacked.length) {
+    const reason = `no ${[...new Set(unpacked.map((c) => c.expectedDir))].join(', ')} prebuild: container cells (AE1)`;
+    if (ci) fail(`${reason} must run in CI`);
+    return console.log(`${reason} skipped`);
+  }
+
+  for (const cell of cells.filter((c) => c.expectReady)) {
+    const context = fs.mkdtempSync(path.join(os.tmpdir(), `${cell.tag}-`));
+    fs.writeFileSync(path.join(context, 'Dockerfile'), cell.dockerfile);
+    fs.writeFileSync(path.join(context, '.npmrc'), cell.npmrc);
+    fs.writeFileSync(path.join(context, 'package.json'), '{"name":"ae1","private":true}\n');
+    fs.copyFileSync(tgz, path.join(context, 'wait-on.tgz'));
+    fs.copyFileSync(probe, path.join(context, 'prebuild-probe.js'));
+    const built = childProcess.spawnSync('docker', ['build', '-t', cell.tag, context], { stdio: 'inherit' });
+    if (built.status !== 0) fail(`${cell.tag}: docker build failed`);
+    fs.rmSync(context, { recursive: true, force: true });
+  }
+  for (const cell of cells) {
+    const run = childProcess.spawnSync('docker', cell.runArgs, { encoding: 'utf8' });
+    const output = `${run.stdout}${run.stderr}`;
+    const passed = cell.expectReady
+      ? run.status === 0 && JSON.parse(run.stdout.trim()).realpath.endsWith(`/prebuilds/${cell.expectedDir}/${ADDON}`)
+      : run.status !== 0 && run.stderr.includes('Timed out waiting for');
+    if (!passed) fail(`${cell.name}: unexpected result (exit ${run.status})\n${output}`);
+    console.log(`${cell.name}: ok (exit ${run.status})\n${output.trim()}`);
+  }
 }
 
 if (require.main === module) main();
@@ -167,6 +236,8 @@ module.exports = {
   sha256sumsLine,
   installCells,
   assertInstalledAddon,
+  containerCells,
+  dockerDecision,
   parseArgs,
   PNPM_VERSION
 };
