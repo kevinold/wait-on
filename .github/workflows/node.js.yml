@@ -130,3 +130,12 @@ jobs:
           wait-on-*.tgz
           SHA256SUMS
         if-no-files-found: ignore
+
+  # Fork test prerelease. A reusable workflow in the same run, because
+  # workflow_run/workflow_dispatch only fire for files on the default branch.
+  prerelease:
+    needs: [build, rust, package]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/spike-next-rs' && github.repository == 'kevinold/wait-on'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/rs-prerelease.yml
