@@ -5,7 +5,7 @@ name: CI
 
 on:
   push:
-    branches: [ "master", "next", "*.x" ]
+    branches: [ "master", "next", "*.x", "spike-next-rs" ]
   pull_request:
 
 jobs:
@@ -29,3 +29,104 @@ jobs:
     - run: npm ci --engine-strict
     - run: npm run build --if-present
     - run: npm test
+
+  # Rust engine jobs (spike-next-rs). Lanes change behavior only through the npm
+  # scripts these jobs call (`ci:rs`, `build:napi`, `ci:rs:package`); every
+  # Rust-specific step no-ops until Cargo.toml / rust-toolchain.toml exist.
+  # See docs/guides/ci.md.
+  rust:
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - name: Install Rust toolchain
+      if: hashFiles('rust-toolchain.toml') != ''
+      run: rustup toolchain install
+    - uses: Swatinem/rust-cache@v2
+      if: hashFiles('Cargo.toml') != ''
+    - uses: taiki-e/install-action@v2
+      if: hashFiles('Cargo.toml') != ''
+      with:
+        tool: cargo-deny
+    - run: npm ci --engine-strict
+    - run: npm run --if-present ci:rs
+
+  napi:
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-14, zig: false, extra-args: '' }
+          - { target: x86_64-apple-darwin, os: macos-14, zig: false, extra-args: '' }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, zig: false, extra-args: '' }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, zig: false, extra-args: '' }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, extra-args: '-x' }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, zig: true, extra-args: '-x' }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, zig: false, extra-args: '' }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, zig: false, extra-args: '' }
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - name: Install Rust toolchain and target
+      if: hashFiles('rust-toolchain.toml') != ''
+      run: |
+        rustup toolchain install
+        rustup target add ${{ matrix.target }}
+    - uses: Swatinem/rust-cache@v2
+      if: hashFiles('Cargo.toml') != ''
+      with:
+        key: ${{ matrix.target }}
+    - uses: mlugg/setup-zig@v2
+      if: matrix.zig && hashFiles('Cargo.toml') != ''
+    - run: npm ci --engine-strict
+    - run: npm run --if-present build:napi -- --target ${{ matrix.target }} ${{ matrix.extra-args }}
+    - uses: actions/upload-artifact@v7
+      with:
+        name: prebuilds-${{ matrix.target }}
+        path: prebuilds/**
+        if-no-files-found: ignore
+
+  package:
+
+    needs: napi
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: prebuilds-*
+        path: prebuilds
+        merge-multiple: true
+    - run: npm ci --engine-strict
+    - run: npm run --if-present ci:rs:package
+    - uses: actions/upload-artifact@v7
+      with:
+        name: package
+        path: |
+          wait-on-*.tgz
+          SHA256SUMS
+        if-no-files-found: ignore
