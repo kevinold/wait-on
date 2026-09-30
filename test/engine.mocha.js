@@ -6,9 +6,11 @@
 
 const childProcess = require('child_process');
 const fs = require('fs');
+const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
-const { describe, it, before, after } = require('mocha');
+const { describe, it, before, after, afterEach } = require('mocha');
 const { expect } = require('chai');
 
 const waitOn = require('../lib/wait-on');
@@ -178,6 +180,98 @@ describe('engine selection', function () {
       expect(engine).to.equal('rust');
       expect(addon.version()).to.equal(workspaceVersion());
       expect(addon.noop()).to.equal(undefined);
+    });
+  });
+
+  describe('real addon HttpChecker', function () {
+    let addon;
+    const closers = [];
+
+    before(function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      addon = require(addonPath({}));
+    });
+
+    afterEach(function () {
+      while (closers.length) closers.pop()();
+    });
+
+    // Listens on an ephemeral port; counts accepted sockets and destroys them on cleanup.
+    function listen(server) {
+      const sockets = new Set();
+      server.on('connection', (s) => sockets.add(s));
+      closers.push(() => {
+        for (const s of sockets) s.destroy();
+        server.close();
+      });
+      return new Promise((resolve) =>
+        server.listen(0, '127.0.0.1', () =>
+          resolve({ url: `http://127.0.0.1:${server.address().port}/`, sockets })
+        )
+      );
+    }
+    const okServer = () => listen(http.createServer((req, res) => res.end()));
+    const hungServer = () => listen(net.createServer(() => {}));
+
+    function checker(url, extra = {}) {
+      return new addon.HttpChecker({ url, method: 'HEAD', headers: {}, followRedirect: true, ...extra });
+    }
+
+    it('should export an HttpChecker class with check and cancel', function () {
+      expect(addon.HttpChecker).to.be.a('function');
+      expect(addon.HttpChecker.prototype.check).to.be.a('function');
+      expect(addon.HttpChecker.prototype.cancel).to.be.a('function');
+    });
+
+    it('should resolve ok with the status when the server answers 200', async function () {
+      const { url } = await okServer();
+      const r = await checker(url).check();
+      expect(r.ok).to.equal(true);
+      expect(r.status).to.equal(200);
+    });
+
+    it('should resolve not ok when validateStatus rejects the status', async function () {
+      const { url } = await okServer();
+      const r = await checker(url).check((s) => s === 500);
+      expect(r).to.include({ ok: false, status: 200 });
+    });
+
+    it('should resolve not ok and keep the process alive when validateStatus throws', async function () {
+      const { url } = await okServer();
+      const r = await checker(url).check(() => {
+        throw new Error('boom');
+      });
+      expect(r).to.include({ ok: false, status: 200 });
+    });
+
+    it('should settle every in-flight and later check not ok after one cancel', async function () {
+      const { url } = await hungServer();
+      const c = checker(url);
+      const inflight = [c.check(), c.check()];
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const t0 = Date.now();
+      c.cancel();
+      const results = await Promise.all(inflight);
+      expect(Date.now() - t0).to.be.below(500);
+      for (const r of results) expect(r).to.include({ ok: false, error: 'cancelled' });
+      const t1 = Date.now();
+      expect(await c.check()).to.include({ ok: false, error: 'cancelled' });
+      expect(Date.now() - t1).to.be.below(100);
+    });
+
+    it('should settle not ok when timeoutMs elapses against a hung server', async function () {
+      const { url } = await hungServer();
+      const r = await checker(url, { timeoutMs: 50 }).check();
+      expect(r.ok).to.equal(false);
+      expect(r.error).to.be.a('string');
+    });
+
+    it('should reuse one connection across sequential checks', async function () {
+      const { url, sockets } = await okServer();
+      const c = checker(url);
+      expect((await c.check()).ok).to.equal(true);
+      expect((await c.check()).ok).to.equal(true);
+      expect(sockets.size).to.equal(1);
     });
   });
 

@@ -14,7 +14,7 @@ doctest = false
 
 [dependencies]
 wait-on-core = { path = "../wait-on-core" }
-napi = { version = "3", default-features = false, features = ["napi4"] }
+napi = { version = "3", default-features = false, features = ["napi4", "async"] }
 napi-derive = "3"
 
 [build-dependencies]
