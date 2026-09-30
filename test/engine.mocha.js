@@ -18,7 +18,7 @@ const CLI_PATH = path.resolve(__dirname, '../bin/wait-on');
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
 const POISON = path.join(os.tmpdir(), `wait-on-no-such-addon-${process.pid}`, 'wait-on.node');
-const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH'];
+const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH', 'WAIT_ON_FAKE_FILE_SIZE'];
 const OPTS = { resources: [__filename], timeout: 1000, interval: 100, window: 100 };
 
 // Run fn with the engine env vars set exactly to vars (unset when absent), then restore.
@@ -39,13 +39,13 @@ async function withEnv(vars, fn) {
   }
 }
 
-function runCLI(vars) {
+function runCLI(vars, resource = __filename) {
   const env = { ...process.env };
   for (const k of ENGINE_VARS) {
     if (vars[k] === undefined) delete env[k];
     else env[k] = vars[k];
   }
-  const args = [CLI_PATH, __filename, '-t', '1000', '-i', '100', '-w', '100'];
+  const args = [CLI_PATH, resource, '-t', '1000', '-i', '100', '-w', '100'];
   const r = childProcess.spawnSync(process.execPath, args, { env, encoding: 'utf8' });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -216,6 +216,48 @@ describe('engine selection', function () {
       const r = runCLI(vars);
       expect(r.code).to.equal(1);
       expect(r.stderr).to.include('js, rust, rust-strict');
+    });
+  });
+
+  describe('file: probe routing', function () {
+    // The fixture answers every probe with a constant size (1, or WAIT_ON_FAKE_FILE_SIZE),
+    // an answer JS cannot give for these paths, so success proves the addon was asked.
+    const fake = require(FIXTURE_ADDON);
+    const missing = path.join(os.tmpdir(), `wait-on-no-such-file-${process.pid}`);
+    const rust = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
+    const fast = { timeout: 1000, interval: 100, window: 100 };
+
+    for (const resource of [missing, `file:${missing}`]) {
+      it(`should succeed on a missing file under rust when the stub addon answers the probe (${resource === missing ? 'bare path' : 'file: prefix'})`, async function () {
+        fake.calls.length = 0;
+        await withEnv(rust, () => waitOn({ ...fast, resources: [resource] }));
+        expect(fake.calls).to.include(missing);
+      });
+    }
+
+    it('should exit 0 from the CLI on a missing file under rust with the stub addon, and 1 under js', function () {
+      expect(runCLI(rust, missing).code).to.equal(0);
+      const js = runCLI({ ...rust, WAIT_ON_ENGINE: 'js' }, missing);
+      expect(js.code).to.equal(1);
+      expect(js.stderr).to.include('Timed out');
+    });
+
+    it('should never call the stub and time out on a missing file under js', async function () {
+      fake.calls.length = 0;
+      let err;
+      await withEnv({ ...rust, WAIT_ON_ENGINE: 'js' }, () => waitOn({ ...fast, timeout: 300, resources: [missing] })).catch(
+        (e) => (err = e)
+      );
+      expect(err.message).to.match(/^Timed out waiting for/);
+      expect(fake.calls).to.have.length(0);
+    });
+
+    it('should succeed in reverse mode on an existing file when the stub reports -1 under rust', async function () {
+      fake.calls.length = 0;
+      await withEnv({ ...rust, WAIT_ON_FAKE_FILE_SIZE: '-1' }, () =>
+        waitOn({ ...fast, reverse: true, resources: [__filename] })
+      );
+      expect(fake.calls).to.include(__filename);
     });
   });
 
