@@ -5,6 +5,8 @@ use napi::{
 use napi_derive::napi;
 use wait_on_core::parse::Interval;
 
+mod http;
+
 #[napi]
 pub fn version() -> String {
     wait_on_core::version().to_string()

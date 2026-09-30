@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+pub mod http;
 pub mod parse;
 pub mod socket;
 pub mod tcp;

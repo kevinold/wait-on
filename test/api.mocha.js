@@ -1062,6 +1062,123 @@ describe('api', function () {
     });
   });
 
+  // L4 input-matrix cells. Real clock: under the Rust engine the check settles on another
+  // thread, which a virtual clock cannot wait for. Under WAIT_ON_ENGINE=rust* each test
+  // loads the counting addon (delegating to the real prebuild) and asserts the Rust check ran.
+  describe('http checks on either engine', function () {
+    const COUNTING_ADDON = path.join(__dirname, 'fixtures', 'counting-addon.js');
+    const counting = require('./fixtures/counting-addon');
+    const isRust = /^rust(-strict)?$/.test(process.env.WAIT_ON_ENGINE || '');
+    const SHORT = { timeout: 600, interval: 100 };
+
+    function listen(handler) {
+      httpServer = http.createServer(handler);
+      return new Promise((resolve) => httpServer.listen(0, 'localhost', () => resolve(httpServer.address().port)));
+    }
+
+    // 'resolved' or the rejection message; under rust*, also proves the addon checked.
+    async function outcome(opts) {
+      const saved = process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
+      if (isRust) process.env.WAIT_ON_NATIVE_LIBRARY_PATH = COUNTING_ADDON;
+      counting.reset();
+      try {
+        return await waitOn(opts).then(() => 'resolved', (e) => e.message);
+      } finally {
+        if (saved === undefined) delete process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
+        else process.env.WAIT_ON_NATIVE_LIBRARY_PATH = saved;
+        if (isRust) expect(counting.calls.filter((c) => c.type === 'check')).to.have.length.of.at.least(1);
+      }
+    }
+
+    for (const [prefix, method] of [['http', 'HEAD'], ['http-get', 'GET']]) {
+      it(`should timeout without following the redirect when followRedirect is false (${method})`, async function () {
+        const seen = [];
+        const port = await listen((req, res) => {
+          seen.push(req.url);
+          if (req.url === '/') res.writeHead(302, { Location: '/foo' });
+          res.end('data');
+        });
+        const r = await outcome({ resources: [`${prefix}://localhost:${port}/`], followRedirect: false, ...SHORT });
+        expect(r).to.match(/Timed out/);
+        expect(seen).to.include('/');
+        expect(seen).to.not.include('/foo');
+      });
+
+      it(`should send API headers as strings when headers include a number (${method})`, async function () {
+        let seen;
+        const port = await listen((req, res) => {
+          seen = req.headers;
+          res.end('ok');
+        });
+        const headers = { 'X-Custom': 'keep', 'X-Num': 42 };
+        expect(await outcome({ resources: [`${prefix}://localhost:${port}/`], headers, ...SHORT })).to.equal('resolved');
+        expect(seen['x-custom']).to.equal('keep');
+        expect(seen['x-num']).to.equal('42');
+      });
+
+      it(`should timeout without crashing when validateStatus throws on a 200 (${method})`, async function () {
+        const port = await listen((req, res) => res.end('ok'));
+        const validateStatus = () => {
+          throw new Error('boom');
+        };
+        const r = await outcome({ resources: [`${prefix}://localhost:${port}/`], validateStatus, ...SHORT });
+        expect(r).to.match(/Timed out/);
+      });
+    }
+
+    it('should timeout when a GET body stalls past httpTimeout', async function () {
+      const port = await listen((req, res) => {
+        res.writeHead(200, { 'Content-Length': '10' });
+        res.write('x'); // headers and one byte, then the body stalls
+      });
+      const r = await outcome({ resources: [`http-get://localhost:${port}/`], httpTimeout: 70, ...SHORT });
+      expect(r).to.match(/Timed out/);
+    });
+
+    it('should send a Basic Authorization header when auth is set on a GET', async function () {
+      let seen;
+      const port = await listen((req, res) => {
+        seen = req.headers.authorization;
+        res.end('ok');
+      });
+      const auth = { username: 'user', password: 'p@ss' };
+      expect(await outcome({ resources: [`http-get://localhost:${port}/`], auth, ...SHORT })).to.equal('resolved');
+      expect(seen).to.equal('Basic ' + Buffer.from('user:p@ss').toString('base64'));
+    });
+
+    it('should succeed when validateStatus returns a truthy non-boolean', async function () {
+      const port = await listen((req, res) => res.end('ok'));
+      const r = await outcome({ resources: [`http://localhost:${port}/`], validateStatus: () => 1, ...SHORT });
+      expect(r).to.equal('resolved');
+    });
+
+    it('should succeed on 200 and timeout on 204 when validateStatus accepts only 200 (GET)', async function () {
+      let code = 200;
+      const port = await listen((req, res) => {
+        res.statusCode = code;
+        res.end();
+      });
+      const opts = { resources: [`http-get://localhost:${port}/health`], validateStatus: (s) => s === 200, ...SHORT };
+      expect(await outcome(opts)).to.equal('resolved');
+      code = 204;
+      expect(await outcome(opts)).to.match(/Timed out/);
+    });
+
+    for (const simultaneous of [1, 3]) {
+      it(`should succeed and consult validateStatus per resource when simultaneous is ${simultaneous}`, async function () {
+        const port = await listen((req, res) => res.end('ok'));
+        let calls = 0;
+        const validateStatus = (s) => {
+          calls++;
+          return s === 200;
+        };
+        const resources = ['/a', '/b', '/c'].map((p) => `http://localhost:${port}${p}`);
+        expect(await outcome({ resources, validateStatus, simultaneous, ...SHORT })).to.equal('resolved');
+        expect(calls).to.be.at.least(3);
+      });
+    }
+  });
+
   describe('resource validation (#217, #140, #141)', function () {
     it('should reject a malformed http-get resource promptly, not poll to timeout (#217)', function (done) {
       // http-get:localhost:3000/x -> http:localhost:3000/x (no //): would poll forever before
