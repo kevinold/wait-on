@@ -20,15 +20,15 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/https-proxy.mocha.js` | TLS client options, proxy, unix socket + proxy |
 | `test/coverage.mocha.js` | branches the main suites miss (validation errors, dispatcher options, verbose, CLI help) |
 | `test/native-helpers.mocha.js` | pure helpers exposed via `_internal` |
-| `test/engine.mocha.js` | `WAIT_ON_ENGINE` selection, fallback and errors (API and CLI), prebuild path resolution, `file:` probe routing (stub addon) and the real addon's `fileSize` |
+| `test/engine.mocha.js` | `WAIT_ON_ENGINE` selection, fallback and errors (API and CLI), prebuild path resolution, `file:` probe routing and `command:` check routing (stub addon), the real addon's `fileSize` and `runCommand`, and that slow commands never starve a `file:` probe |
 | `test/engine-checks.mocha.js` | tcp/socket dispatch to the addon: fixture addon (always runs) and real addon (skips without a host prebuild) |
 | `test/rust-pending.mocha.js` | the Rust pending list hooks (fixture specs in a mocha subprocess) |
 | `test/scripts.mocha.js` | planning functions behind `build:napi` and `ci:rs` |
 | `test/rust-scaffold.mocha.js` | toolchain pin equals the workspace MSRV; `Cargo.lock` committed |
-| `crates/wait-on-core` `#[test]`s | Rust unit tests (`cargo test --workspace`) |
+| `crates/wait-on-core` `#[test]`s | Rust unit tests (`cargo test --workspace`); `run_command` cases use per-OS shell builtins (`#[cfg(unix)]`/`#[cfg(windows)]`) so no `node` is needed |
 | `test/types.test-d.ts` | `index.d.ts` type tests (`npm run test:types`) |
 
-Shared fixtures: `test/config-http-resources.js`, `test/config-headers.js`, `test/config-status-codes.js`. Engine fixtures live under `test/fixtures/` (outside the `*.mocha.js` glob): `fake-addon.js` stands in for the native addon via `WAIT_ON_NATIVE_LIBRARY_PATH`. Its `fileSize` records each probed path in `calls` and answers a constant (`WAIT_ON_FAKE_FILE_SIZE`, default `1`) that JS cannot produce for a missing file, so a success proves the Rust route ran. `fake-addon-checks.js` extends it with `tcpCheck`/`socketCheck`, answers per `WAIT_ON_FAKE_ADDON_ANSWER` (`ready`, `refused`, `timeout`), records calls in `module.exports.calls` and appends them to the file in `WAIT_ON_FAKE_ADDON_LOG` (CLI subprocess proof). `test/helpers/engine-env.js` has `withEnv` / `runCLI`.
+Shared fixtures: `test/config-http-resources.js`, `test/config-headers.js`, `test/config-status-codes.js`. Engine fixtures live under `test/fixtures/` (outside the `*.mocha.js` glob): `fake-addon.js` stands in for the native addon via `WAIT_ON_NATIVE_LIBRARY_PATH`. Its `fileSize` records each probed path in `calls` and answers a constant (`WAIT_ON_FAKE_FILE_SIZE`, default `1`) that JS cannot produce for a missing file, so a success proves the Rust route ran. Its `runCommand` records `{ command, timeoutMs }` in the same `calls` and answers `ok: true` without spawning (`ok: false` when `WAIT_ON_FAKE_COMMAND_OK=0`), so a failing command succeeding, or a passing one satisfying reverse mode, proves the same. `fake-addon-checks.js` extends it with `tcpCheck`/`socketCheck`, answers per `WAIT_ON_FAKE_ADDON_ANSWER` (`ready`, `refused`, `timeout`), records calls in `module.exports.calls` and appends them to the file in `WAIT_ON_FAKE_ADDON_LOG` (CLI subprocess proof). `test/helpers/engine-env.js` has `withEnv` / `runCLI`.
 
 ## Conformance and property tests
 
