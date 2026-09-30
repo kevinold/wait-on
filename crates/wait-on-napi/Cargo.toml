@@ -1,0 +1,21 @@
+[package]
+name = "wait-on-napi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+# The cdylib resolves napi symbols only when Node loads it; logic is tested in wait-on-core.
+test = false
+doctest = false
+
+[dependencies]
+wait-on-core = { path = "../wait-on-core" }
+napi = { version = "3", default-features = false, features = ["napi4"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"
