@@ -413,3 +413,9 @@ Per unit:
 ## Resume notes
 
 <!-- Lane worker notes go here only. -->
+
+- 2026-09-30: U1-U5 landed (b171574, c361e14, 36f3379, docs). `test/rust-pending.js` stayed `[]`; 509 passing under both `npm test` and `WAIT_ON_ENGINE=rust-strict` on darwin arm64.
+- Plan review (ce-doc-review) added KTD10: https × env-proxy and non-`http:` proxy URIs stay on JS. The JS engine on this branch drops TLS options behind env proxies (fix 23a3dfb/19293cc lives on `refactor/axios-to-fetch` only); flip KTD10 (a) once it lands.
+- U1 found `build()` can fail on PEM that parses (bad DER, key/cert mismatch), so the empty-roots fallback wraps parse and build together.
+- U4 found env-proxy selection is per resource, not per redirect hop; recorded as a delta in `docs/guides/architecture.md`.
+- Windows named-pipe cargo test and win32 pipe routing tests first run on the Windows `rust` CI row.

@@ -42,27 +42,39 @@ Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`soc
 
 Status: planned (lane L7)
 
-### http(s) (L4)
+### http(s) (L4, L5)
 
-`http:`/`https:` (HEAD) and `http-get:`/`https-get:` (GET) run in Rust when the Rust engine is loaded and no L5 condition holds. `createHTTP$` decides once per resource with `routesHttpToRust` ([`lib/wait-on.js`](../../lib/wait-on.js)):
+`http:`/`https:` (HEAD) and `http-get:`/`https-get:` (GET) run in Rust when the Rust engine is loaded, including TLS options, proxies and `http://unix:` (L5). `createHTTP$` decides once per resource with `routesHttpToRust` ([`lib/wait-on.js`](../../lib/wait-on.js)):
 
-| Condition on validated options and env | Check |
+| Condition on validated options, url and env | Check |
 |---|---|
 | Addon not loaded (`js`, or `rust` with load failure) | JS (undici) |
-| `http://unix:` socket path | JS (L5) |
-| Any of `ca`, `cert`, `key`, `passphrase` | JS (L5) |
-| `strictSSL: true` | JS (L5) |
-| `proxy` set (object or `false`) | JS (L5) |
-| `HTTP_PROXY` / `http_proxy` / `HTTPS_PROXY` / `https_proxy` set | JS (L5) |
 | URL with userinfo (`user:pass@`) | JS (undici rejects it; kept for parity) |
-| Otherwise: plain http, and https with the default `strictSSL: false` | Rust |
+| https target whose env-proxy decision selects a proxy | JS: on this branch the JS path's `EnvHttpProxyAgent({ connect })` drops `strictSSL`/`ca`/`cert`/`key` for https targets (undici reads target TLS only from `requestTls`), so Rust would diverge. Moves to Rust once the `requestTls`/`proxyTls` fix from `refactor/axios-to-fetch` reaches this branch |
+| A proxy URI in play (the `proxy` object's URI, or a set `http_proxy ?? HTTP_PROXY` / `https_proxy ?? HTTPS_PROXY`) that is not a valid `http:` URL | JS: undici verifies an `https:` proxy hop with Node defaults while reqwest would apply the target's TLS settings to it; `socks*` needs reqwest's `socks` feature (not built); a malformed env value makes undici's constructor throw at once |
+| Otherwise: plain http and https, any TLS option, `strictSSL: true`, `http:` proxy objects, `proxy: false`, env proxies for http targets or `NO_PROXY`-exempted https targets, `http://unix:` (named pipes on Windows) | Rust |
 
-- **Checker.** `crates/wait-on-core/src/http.rs` holds `HttpChecker`: one reqwest `Client` per resource (rustls with the `ring` provider, no OpenSSL, `no_proxy()`, invalid certs accepted), mirroring the one undici dispatcher per resource on the JS path. `followRedirect: true` maps to `redirect::Policy::limited(20)`, `false` to `Policy::none()` so the 3xx is the status checked. `httpTimeout` becomes a whole-request timeout covering the GET body; unset means none. GET reads the body only when the status passed.
-- **Binding.** `crates/wait-on-napi/src/http.rs` exposes `new HttpChecker({ url, method, headers, followRedirect, timeoutMs })`, `check(validateStatus?)` (a Promise of `{ ok, status?, statusText?, error? }` that never rejects for not-ready) and `cancel()`.
+- **Checker.** `crates/wait-on-core/src/http.rs` holds `HttpChecker`: one reqwest `Client` per resource (rustls with the `ring` provider, no OpenSSL, `no_proxy()` so the environment never leaks in), mirroring the one undici dispatcher per resource on the JS path. `followRedirect: true` maps to `redirect::Policy::limited(20)`, `false` to `Policy::none()` so the 3xx is the status checked. `httpTimeout` becomes a whole-request timeout covering the GET body; unset means none. GET reads the body only when the status passed.
+- **Binding.** `crates/wait-on-napi/src/http.rs` exposes `new HttpChecker({ url, method, headers, followRedirect, timeoutMs, roots?, cert?, key?, proxy?, socketPath? })`, `check(validateStatus?)` (a Promise of `{ ok, status?, statusText?, error? }` that never rejects for not-ready) and `cancel()`.
 - **`validateStatus` across the boundary.** JS wraps the user function as `s => Boolean(fn(s))` with a throw mapped to `false`, then passes it as a napi `ThreadsafeFunction` (`CalleeHandled = false`, weak). Rust calls it with `call_async_catch`, so a JS throw or non-boolean is an `Err` (not ready), never a fatal exception. The JS thread is free while it awaits the check Promise, so callbacks from concurrent checks under `simultaneous` do not deadlock.
 - **Headers and auth.** JS builds the final header map (the `auth` Basic header and its case-insensitive override) for both engines and passes string values (`String(v)`); Rust sets them verbatim.
 - **Teardown.** `finalize` calls `checker.cancel()`, a tokio `watch` flag: every in-flight check and any later one resolves `{ ok: false, error: 'cancelled' }`. It also drops the checker's `Client`, so pooled keep-alive sockets close as the JS path's `dispatcher.close()` does; otherwise each finished resource held an idle connection until reqwest's pool timeout, which exhausted sockets (`ENOBUFS`) across a full test run on Windows. Without it a pending Promise to a hung server would keep an API caller's process alive after `waitOn` settles (`test/engine.mocha.js`, process lifetime).
 - `reverse` is still applied in JS (`negateAsync`) to the addon's un-negated `ok`.
+
+TLS, proxy and unix options cross the boundary as plain strings JS prepares once per resource; Rust only configures reqwest from them:
+
+| Input | JS preparation | Addon field | reqwest |
+|---|---|---|---|
+| `strictSSL: true` | `ca` as UTF-8 PEM, else `tls.getCACertificates('default')` (Node's roots, including `NODE_EXTRA_CA_CERTS`) | `roots` | `tls_certs_only` over exactly those certificates; never the OS store |
+| `strictSSL: false` (default) | nothing | absent | `tls_danger_accept_invalid_certs(true)` |
+| `cert` + `key` (+ `passphrase`) | key re-exported as plain PKCS#8 with `crypto.createPrivateKey`, passed as given when it does not parse | `cert`, `key` | `identity(Identity::from_pem(cert + key))` |
+| TLS material that does not parse | passed as given | as given | client with an empty root set and no danger flag: every TLS hop fails, plain http still works (Node's per-connection failure) |
+| `proxy` object | normalized URI (`proxyObjectUri`, shared with the JS path) | `proxy` | `Proxy::all` after `no_proxy()` |
+| `proxy` unset | `envProxyFor`: undici's `EnvHttpProxyAgent` choice (`http_proxy ?? HTTP_PROXY`, `https_proxy ?? HTTPS_PROXY` falling back to the http proxy, undici's `NO_PROXY` grammar) | `proxy` or absent | as above |
+| `proxy: false` or `http://unix:` | none | absent | direct |
+| `http://unix:<sock>:<path>` | `socketPath`, url `http://localhost/<path>` | `socketPath` | `unix_socket` (POSIX) / `windows_named_pipe` (Windows) |
+
+TLS material is passed for every target scheme because one client follows the whole redirect chain, and an http resource may redirect to https.
 
 Deliberate JS vs Rust differences on the Rust path:
 
@@ -70,6 +82,9 @@ Deliberate JS vs Rust differences on the Rust path:
 - Redirect hop limit: 20 on both (reqwest `Policy::limited(20)`, undici fetch's limit).
 - TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout` (under `reverse` it reads as gone on the first poll).
 - `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.
+- Certificate shape under `strictSSL: true`: webpki requires the server name in `subjectAltName` and rejects an end-entity certificate with `basicConstraints CA:TRUE`. Node accepts a CN-only or CA-flagged self-signed certificate supplied as its own `ca`; Rust times out on it. The test fixture (`test/helpers/tls-fixture.js`) generates a SAN, `CA:FALSE` leaf so both engines verify it.
+- Env proxy selection is computed once per resource from the resource URL: `NO_PROXY` changes during the wait are not re-read (undici re-reads per dispatch), and a redirect to another scheme or host keeps the first hop's proxy decision (undici decides per hop).
+- Under `--verbose`, TLS-material and proxy errors carry reqwest's error text, not Node's.
 
 **Per-check overhead** (`node benchmarks/http-ffi.js --iterations 200`; darwin arm64, Node v26.3.1). Per-call rows time a full `waitOn` against a ready local server (one new checker and connection each); `steady` rows time the gap between polls on one resource (connection reuse); `ffi noop` is the bare boundary (`addon.noop()`, mean of 1000 calls).
 
