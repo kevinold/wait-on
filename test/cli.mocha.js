@@ -6,6 +6,7 @@ const http = require('http');
 const path = require('path');
 const temp = require('temp');
 const mkdirp = require('mkdirp');
+const stubProxy = require('./helpers/stub-proxy');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -601,6 +602,22 @@ describe('cli', function () {
   });
 
   context('resources are specified in config', () => {
+    // L5: the engine comes from the inherited env, so this runs on Rust under rust*.
+    it('should succeed through the proxy object named in the config file', async function () {
+      const proxy = await stubProxy.start();
+      httpServer = http.createServer((req, res) => res.end('data'));
+      await new Promise((resolve) => httpServer.listen(0, 'localhost', resolve));
+      const dir = temp.mkdirSync();
+      const config = path.join(dir, 'proxy-config.js');
+      const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port) };
+      const resources = [`http://localhost:${httpServer.address().port}/`];
+      fs.writeFileSync(config, `module.exports = ${JSON.stringify({ resources, proxy: proxyObj })};`);
+      const code = await new Promise((resolve) => execCLI(['--config', config].concat(FAST_OPTS), {}).on('exit', resolve));
+      await proxy.close();
+      expect(code).to.equal(0);
+      expect(proxy.requests).to.have.length.of.at.least(1);
+    });
+
     it('should succeed when http resources become available later', function (done) {
       setTimeout(function () {
         httpServer = http.createServer().on('request', function (req, res) {

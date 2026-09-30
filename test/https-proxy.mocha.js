@@ -10,8 +10,10 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const net = require('net');
+const path = require('path');
 const tlsFixture = require('./helpers/tls-fixture');
 const stubProxy = require('./helpers/stub-proxy');
+const { withEnv } = require('./helpers/engine-env');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -19,6 +21,7 @@ const it = mocha.it;
 const before = mocha.before;
 const after = mocha.after;
 const afterEach = mocha.afterEach;
+const beforeEach = mocha.beforeEach;
 const chai = require('chai');
 const expect = chai.expect;
 
@@ -31,13 +34,43 @@ function closeServers(done) {
   servers = [];
   let pending = toClose.length;
   if (!pending) return done();
-  toClose.forEach((s) => s.close(() => { if (--pending === 0) done(); }));
+  toClose.forEach((s) => {
+    s.close(() => { if (--pending === 0) done(); });
+    s.closeAllConnections(); // pooled keep-alive connections would hold close() open
+  });
 }
 
 function listenHttp(handler, cb) {
   const server = http.createServer(handler);
   servers.push(server);
   server.listen(0, 'localhost', () => cb(server.address().port));
+}
+const httpTarget = (handler = (req, res) => res.end('ok')) => new Promise((resolve) => listenHttp(handler, resolve));
+
+// Under WAIT_ON_ENGINE=rust* each check loads the counting addon (delegating to the real
+// prebuild), so a test proves which engine answered.
+const isRust = /^rust(-strict)?$/.test(process.env.WAIT_ON_ENGINE || '');
+const COUNTING_ADDON = path.join(__dirname, 'fixtures', 'counting-addon.js');
+const counting = isRust ? require(COUNTING_ADDON) : null;
+const PROXY_ENV = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+
+// 'resolved' or the rejection message, with the proxy env cleared except vars (set both
+// spellings unless case is the point: Windows env names are case-insensitive). Under
+// rust*, asserts the addon checked (routed) or was never constructed (routed: false).
+async function outcome(opts, { vars = {}, routed = true } = {}) {
+  const env = {
+    WAIT_ON_ENGINE: process.env.WAIT_ON_ENGINE,
+    WAIT_ON_NATIVE_LIBRARY_PATH: isRust ? COUNTING_ADDON : undefined,
+    ...Object.fromEntries(PROXY_ENV.map((k) => [k, undefined])),
+    ...vars
+  };
+  if (counting) counting.reset();
+  const r = await withEnv(env, () => waitOn({ ...FAST, ...opts }).then(() => 'resolved', (e) => e.message));
+  if (counting) {
+    if (routed) expect(counting.calls.filter((c) => c.type === 'check')).to.have.length.of.at.least(1);
+    else expect(counting.calls.filter((c) => c.type === 'construct')).to.have.length(0);
+  }
+  return r;
 }
 
 describe('https/tls and proxy parity', function () {
@@ -63,97 +96,216 @@ describe('https/tls and proxy parity', function () {
 
   afterEach(closeServers);
 
-  function listenHttps(handler, cb) {
-    const server = https.createServer({ key, cert }, handler);
-    servers.push(server);
-    server.listen(0, 'localhost', () => cb(server.address().port));
-  }
-
   const socketPathFor = (name) => fx.socketPathFor(name);
 
-  it('should fail an https self-signed cert when strictSSL is true', function (done) {
-    listenHttps((req, res) => { res.end('ok'); }, function (port) {
-      waitOn({ resources: [`https://localhost:${port}/`], strictSSL: true, ...FAST }, function (err) {
-        expect(err).to.be.ok; // rejected: DEPTH_ZERO_SELF_SIGNED_CERT
-        done();
-      });
-    });
-  });
-
-  it('should pass an https self-signed cert when strictSSL is false (default)', function (done) {
-    listenHttps((req, res) => { res.end('ok'); }, function (port) {
-      waitOn({ resources: [`https://localhost:${port}/`], strictSSL: false, ...FAST }, function (err) {
-        expect(err).to.not.be.ok;
-        done();
-      });
-    });
-  });
-
-  it('should pass a self-signed cert when the matching ca is supplied with strictSSL true', function (done) {
-    listenHttps((req, res) => { res.end('ok'); }, function (port) {
-      waitOn({ resources: [`https://localhost:${port}/`], strictSSL: true, ca: cert, ...FAST }, function (err) {
-        expect(err).to.not.be.ok;
-        done();
-      });
-    });
-  });
-
-  it('should resolve a unix-socket resource in both the short and absolute URL forms', function (done) {
-    const sockPath = socketPathFor('sock1');
-    const server = http.createServer((req, res) => { res.statusCode = req.url === '/foo' ? 200 : 404; res.end('x'); });
+  const ok = (req, res) => res.end('ok');
+  function httpsTarget(handler = ok, extra = {}) {
+    const server = https.createServer({ key, cert, ...extra }, handler);
     servers.push(server);
-    server.listen(sockPath, function () {
-      const resources = [
-        'http://unix:' + sockPath + ':/foo', // short form -> relative path /foo
-        'http://unix:' + sockPath + ':http://localhost/foo' // absolute form
-      ];
-      waitOn({ resources, ...FAST }, function (err) {
-        expect(err).to.not.be.ok;
-        done();
+    return new Promise((resolve) => server.listen(0, 'localhost', () => resolve(server.address().port)));
+  }
+  // Requires a client cert the fixture cert verifies; records whether each request's cert was authorized.
+  const mtlsTarget = (authorized) =>
+    httpsTarget(
+      (req, res) => {
+        authorized.push(req.socket.authorized);
+        res.end('ok');
+      },
+      { requestCert: true, rejectUnauthorized: true, ca: cert }
+    );
+  const at = (port) => [`https://localhost:${port}/`];
+  const SHORT = { timeout: 1000 };
+
+  // AE-L5-1
+  it('should fail an https self-signed cert when strictSSL is true', async function () {
+    const port = await httpsTarget();
+    expect(await outcome({ resources: at(port), strictSSL: true, ...SHORT })).to.match(/Timed out/);
+  });
+
+  it('should pass an https self-signed cert when strictSSL is false (default)', async function () {
+    const port = await httpsTarget();
+    expect(await outcome({ resources: at(port), strictSSL: false })).to.equal('resolved');
+  });
+
+  [
+    ['a Buffer', () => cert],
+    ['a string', () => cert.toString()],
+    ['a bundle with an unrelated cert first', () => `${fx.otherCert}${cert}`]
+  ].forEach(function ([label, ca]) {
+    it(`should pass a self-signed cert when the matching ca is supplied as ${label} with strictSSL true`, async function () {
+      const port = await httpsTarget();
+      expect(await outcome({ resources: at(port), strictSSL: true, ca: ca() })).to.equal('resolved');
+    });
+  });
+
+  it('should resolve an http target when strictSSL, ca, cert and key are set', async function () {
+    const port = await httpTarget();
+    const opts = { resources: [`http://localhost:${port}/`], strictSSL: true, ca: cert, cert, key };
+    expect(await outcome(opts)).to.equal('resolved');
+  });
+
+  it('should resolve an http target when cert and key are garbage', async function () {
+    const port = await httpTarget();
+    expect(await outcome({ resources: [`http://localhost:${port}/`], cert: 'garbage', key: 'garbage' })).to.equal('resolved');
+  });
+
+  describe('http redirect to https (TLS material applies to every hop)', function () {
+    async function redirectTarget(seen) {
+      const httpsPort = await httpsTarget((req, res) => {
+        seen.push(req.url);
+        res.end('ok');
+      });
+      return httpTarget((req, res) => {
+        res.writeHead(302, { Location: `https://localhost:${httpsPort}/landed` });
+        res.end();
+      });
+    }
+
+    it('should resolve when strictSSL is true and the matching ca is supplied', async function () {
+      const seen = [];
+      const port = await redirectTarget(seen);
+      expect(await outcome({ resources: [`http://localhost:${port}/`], strictSSL: true, ca: cert })).to.equal('resolved');
+      expect(seen).to.include('/landed');
+    });
+
+    it('should time out when strictSSL is true without ca', async function () {
+      const port = await redirectTarget([]);
+      expect(await outcome({ resources: [`http://localhost:${port}/`], strictSSL: true, ...SHORT })).to.match(/Timed out/);
+    });
+  });
+
+  describe('client certificate (mTLS)', function () {
+    const garbageCert = '-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n';
+    [
+      ['cert and key are supplied', () => ({ cert, key }), true],
+      ['no client cert is supplied', () => ({}), false],
+      ['the encrypted key and its passphrase are supplied', () => ({ cert, key: fx.encryptedKey, passphrase: fx.passphrase }), true],
+      ['the passphrase for the encrypted key is wrong', () => ({ cert, key: fx.encryptedKey, passphrase: 'wrong' }), false],
+      ['a passphrase comes with an unencrypted key', () => ({ cert, key, passphrase: 'ignored' }), true],
+      ['key is an object', () => ({ cert, key: {} }), false],
+      ['cert is garbage', () => ({ cert: garbageCert, key }), false],
+      ['cert and key come with strictSSL and the matching ca', () => ({ cert, key, strictSSL: true, ca: cert }), true]
+    ].forEach(function ([label, tlsOpts, accepted]) {
+      it(`should ${accepted ? 'resolve' : 'time out'} when ${label}`, async function () {
+        const authorized = [];
+        const port = await mtlsTarget(authorized);
+        const r = await outcome({ resources: at(port), ...tlsOpts(), ...SHORT });
+        if (accepted) {
+          expect(r).to.equal('resolved');
+          expect(authorized).to.include(true);
+        } else {
+          expect(r).to.match(/Timed out/);
+          expect(authorized).to.have.length(0);
+        }
       });
     });
   });
 
-  it('should not route a unix-socket check through HTTP_PROXY when it is set in the env', function (done) {
-    // A bogus proxy that would fail the check if the socket request were routed through it.
-    const priorHttpProxy = process.env.HTTP_PROXY;
-    const priorLower = process.env.http_proxy;
-    process.env.HTTP_PROXY = 'http://127.0.0.1:1'; // nothing listening
-    process.env.http_proxy = 'http://127.0.0.1:1';
-    const restore = () => {
-      if (priorHttpProxy === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = priorHttpProxy;
-      if (priorLower === undefined) delete process.env.http_proxy; else process.env.http_proxy = priorLower;
-    };
-    const sockPath = socketPathFor('sock2');
-    const server = http.createServer((req, res) => { res.statusCode = 200; res.end('x'); });
+  describe('https target through a proxy object (CONNECT tunnel)', function () {
+    let proxy;
+    afterEach(async function () {
+      await proxy.close();
+    });
+    const proxyObj = () => ({ host: '127.0.0.1', port: Number(new URL(proxy.url).port) });
+
+    // AE-L5-3
+    it('should resolve through the tunnel when strictSSL is true and the matching ca is supplied', async function () {
+      proxy = await stubProxy.start();
+      const port = await httpsTarget();
+      expect(await outcome({ resources: at(port), proxy: proxyObj(), strictSSL: true, ca: cert })).to.equal('resolved');
+      expect(proxy.connects[0].line).to.equal(`CONNECT localhost:${port}`);
+    });
+
+    it('should verify the target inside the tunnel and time out when strictSSL is true without ca', async function () {
+      proxy = await stubProxy.start();
+      const port = await httpsTarget();
+      expect(await outcome({ resources: at(port), proxy: proxyObj(), strictSSL: true, ...SHORT })).to.match(/Timed out/);
+      expect(proxy.connects).to.have.length.of.at.least(1);
+    });
+
+    it('should present the client cert inside the tunnel', async function () {
+      proxy = await stubProxy.start();
+      const authorized = [];
+      const port = await mtlsTarget(authorized);
+      expect(await outcome({ resources: at(port), proxy: proxyObj(), cert, key })).to.equal('resolved');
+      expect(authorized).to.include(true);
+      expect(proxy.connects).to.have.length.of.at.least(1);
+    });
+  });
+
+  describe('https target and env proxies', function () {
+    let proxy;
+    afterEach(async function () {
+      await proxy.close();
+    });
+
+    // KTD10 (a): the JS engine answers these (it drops TLS options behind an env proxy)
+    it('should tunnel through HTTPS_PROXY on the JS check', async function () {
+      proxy = await stubProxy.start();
+      const port = await httpsTarget();
+      const vars = { HTTPS_PROXY: proxy.url, https_proxy: proxy.url };
+      await outcome({ resources: at(port), strictSSL: true, ca: cert, ...SHORT }, { vars, routed: false });
+      expect(proxy.connects).to.have.length.of.at.least(1);
+    });
+
+    it('should tunnel through HTTP_PROXY on the JS check when HTTPS_PROXY is unset', async function () {
+      proxy = await stubProxy.start();
+      const port = await httpsTarget();
+      const vars = { HTTP_PROXY: proxy.url, http_proxy: proxy.url };
+      await outcome({ resources: at(port), ...SHORT }, { vars, routed: false });
+      expect(proxy.connects).to.have.length.of.at.least(1);
+    });
+
+    it('should connect directly when NO_PROXY exempts the https target', async function () {
+      proxy = await stubProxy.start();
+      const port = await httpsTarget();
+      const vars = { HTTPS_PROXY: proxy.url, https_proxy: proxy.url, NO_PROXY: 'localhost', no_proxy: 'localhost' };
+      expect(await outcome({ resources: at(port) }, { vars })).to.equal('resolved');
+      expect(proxy.connects).to.have.length(0);
+    });
+  });
+
+  // Serves a unix socket (named pipe on Windows) that records each request path.
+  function unixTarget(name, seen, handler = (req, res) => res.end('x')) {
+    const sockPath = socketPathFor(name);
+    const server = http.createServer((req, res) => {
+      seen.push(req.url);
+      handler(req, res);
+    });
     servers.push(server);
-    server.listen(sockPath, function () {
-      waitOn({ resources: ['http://unix:' + sockPath + ':/'], ...FAST }, function (err) {
-        restore();
-        expect(err).to.not.be.ok; // socket check bypasses the proxy
-        done();
-      });
+    return new Promise((resolve) => server.listen(sockPath, () => resolve(sockPath)));
+  }
+
+  it('should resolve a unix-socket resource in both the short and absolute URL forms', async function () {
+    const seen = [];
+    const sockPath = await unixTarget('sock1', seen, (req, res) => {
+      res.statusCode = req.url === '/foo' ? 200 : 404;
+      res.end('x');
     });
+    const resources = [
+      'http://unix:' + sockPath + ':/foo', // short form -> relative path /foo
+      'http://unix:' + sockPath + ':http://localhost/foo' // absolute form
+    ];
+    expect(await outcome({ resources })).to.equal('resolved');
+    expect(seen).to.include('/foo');
   });
 
-  it('should route through an explicit proxy object (dead proxy fails a reachable target)', function (done) {
-    // Target is live; routing the request through a dead proxy must make the check fail,
-    // which proves the proxy object is honored rather than connecting directly.
-    listenHttp((req, res) => { res.statusCode = 200; res.end('ok'); }, function (port) {
-      waitOn({ resources: [`http://localhost:${port}/`], proxy: { host: '127.0.0.1', port: 1 }, timeout: 1000, interval: 100, window: 100 }, function (err) {
-        expect(err).to.be.ok; // could not reach the (dead) proxy
-        done();
-      });
-    });
+  // AE-L5-4
+  it('should not route a unix-socket check through HTTP_PROXY when it is set in the env', async function () {
+    const seen = [];
+    const sockPath = await unixTarget('sock2', seen);
+    const dead = 'http://127.0.0.1:1'; // nothing listening
+    const vars = { HTTP_PROXY: dead, http_proxy: dead };
+    expect(await outcome({ resources: ['http://unix:' + sockPath + ':/health'] }, { vars })).to.equal('resolved');
+    expect(seen).to.include('/health');
   });
 
-  it('should connect directly when proxy is false even if the target is reachable', function (done) {
-    listenHttp((req, res) => { res.statusCode = 200; res.end('ok'); }, function (port) {
-      waitOn({ resources: [`http://localhost:${port}/`], proxy: false, ...FAST }, function (err) {
-        expect(err).to.not.be.ok;
-        done();
-      });
-    });
+  it('should not route a unix-socket check through a proxy object', async function () {
+    const seen = [];
+    const sockPath = await unixTarget('sock3', seen);
+    const opts = { resources: ['http://unix:' + sockPath + ':/health'], proxy: { host: '127.0.0.1', port: 1 } };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(seen).to.include('/health');
   });
 
   it('should surface a malformed proxy object as a callback error, not a synchronous throw', function (done) {
@@ -169,33 +321,24 @@ describe('https/tls and proxy parity', function () {
 
   // ---- B1: proxy URL normalization + construction never throws synchronously ----
   // A proxy object axios normalized (bare/expanded/bracketed IPv6 host, or a protocol
-  // with or without a trailing colon) must build a valid undici URL. Proof it worked:
+  // with or without a trailing colon) must build a valid proxy URL. Proof it worked:
   // against a DEAD proxy the check reaches the overall-timeout error ('Timed out ...'),
   // which is only possible if the URL parsed and the request was actually attempted.
   // A construction error ('Invalid URL') would instead surface immediately (guard test).
+  // An https: proxy stays on the JS check (KTD10 b).
   const DEAD_PROXY = { timeout: 600, interval: 100, window: 100 };
   [
     { label: 'a bare IPv6 host', proxy: { host: '::1', port: 1 } },
     { label: 'an already-bracketed IPv6 host (no double-bracket)', proxy: { host: '[::1]', port: 1 } },
     { label: 'an expanded IPv6 host', proxy: { host: '2001:db8::1', port: 1 } },
     { label: "protocol 'http:' (trailing colon stripped)", proxy: { host: '127.0.0.1', port: 1, protocol: 'http:' } },
-    { label: "protocol 'https:' (trailing colon stripped)", proxy: { host: '127.0.0.1', port: 1, protocol: 'https:' } },
+    { label: "protocol 'https:' (trailing colon stripped)", proxy: { host: '127.0.0.1', port: 1, protocol: 'https:' }, routed: false },
     { label: "protocol 'http' (no colon)", proxy: { host: '127.0.0.1', port: 1, protocol: 'http' } },
     { label: 'an IPv6 host with proxy credentials', proxy: { host: '::1', port: 1, auth: { username: 'u', password: 'p@:/' } } }
-  ].forEach(function ({ label, proxy }) {
-    it(`should build a valid proxy URL for ${label} and reach the timeout via callback`, function (done) {
-      let threw = false;
-      try {
-        waitOn({ resources: ['http://localhost:65002/'], proxy, ...DEAD_PROXY }, function (err) {
-          expect(err).to.be.ok;
-          expect(err.message).to.match(/Timed out/); // parsed OK -> dead proxy contacted -> timeout (not 'Invalid URL')
-          done();
-        });
-      } catch (e) {
-        threw = true;
-        done(e);
-      }
-      expect(threw).to.equal(false); // never a synchronous throw out of waitOn()
+  ].forEach(function ({ label, proxy, routed = true }) {
+    it(`should build a valid proxy URL for ${label} and reach the timeout via callback`, async function () {
+      const r = await outcome({ resources: ['http://localhost:65002/'], proxy, ...DEAD_PROXY }, { routed });
+      expect(r).to.match(/Timed out/); // parsed OK -> dead proxy contacted -> timeout (not 'Invalid URL')
     });
   });
 
@@ -215,6 +358,76 @@ describe('https/tls and proxy parity', function () {
     expect(threw).to.equal(false);
   });
 
+});
+
+// Proxy object, proxy: false and env proxies on http targets (KTD4, KTD8). The stub
+// proxy counts what it forwarded, so direct cells prove it saw nothing.
+describe('http proxy routing parity', function () {
+  this.timeout(6000);
+  let proxy;
+  let port;
+
+  beforeEach(async function () {
+    proxy = await stubProxy.start();
+    port = await httpTarget();
+  });
+
+  afterEach(async function () {
+    await proxy.close();
+    await new Promise((resolve) => closeServers(resolve));
+  });
+
+  const target = () => ({ resources: [`http://localhost:${port}/`] });
+  const proxyObj = (extra) => ({ host: '127.0.0.1', port: Number(new URL(proxy.url).port), ...extra });
+  const both = (name, value) => ({ [name.toUpperCase()]: value, [name.toLowerCase()]: value });
+  const notOnWindows = (ctx) => process.platform === 'win32' && ctx.skip(); // env names are case-insensitive there
+
+  it('should forward an absolute-form request through a proxy object', async function () {
+    expect(await outcome({ ...target(), proxy: proxyObj() })).to.equal('resolved');
+    expect(proxy.requests[0].line).to.equal(`HEAD http://localhost:${port}/`);
+    expect(proxy.connects).to.have.length(0);
+  });
+
+  it('should send Basic proxy credentials from the proxy object auth', async function () {
+    const auth = { username: 'u', password: 'p@:/' };
+    expect(await outcome({ ...target(), proxy: proxyObj({ auth }) })).to.equal('resolved');
+    expect(proxy.requests[0].proxyAuthorization).to.equal('Basic ' + Buffer.from('u:p@:/').toString('base64'));
+  });
+
+  it('should time out through a dead proxy object even though the target is reachable', async function () {
+    const r = await outcome({ ...target(), proxy: { host: '127.0.0.1', port: 1 }, timeout: 1000 });
+    expect(r).to.match(/Timed out/);
+  });
+
+  it('should connect directly when proxy is false even if HTTP_PROXY is set', async function () {
+    expect(await outcome({ ...target(), proxy: false }, { vars: both('http_proxy', proxy.url) })).to.equal('resolved');
+    expect(proxy.requests).to.have.length(0);
+  });
+
+  it('should connect directly when proxy is false and no env proxy is set', async function () {
+    expect(await outcome({ ...target(), proxy: false })).to.equal('resolved');
+  });
+
+  // AE-L5-2 and the env matrix: [label, vars, proxied]
+  [
+    ['HTTP_PROXY is set', () => both('http_proxy', proxy.url), true],
+    ['only lowercase http_proxy is set', () => ({ http_proxy: proxy.url }), true, 'case'],
+    ['NO_PROXY names the host', () => ({ ...both('http_proxy', proxy.url), ...both('no_proxy', 'localhost') }), false],
+    ['only lowercase no_proxy names the host', () => ({ http_proxy: proxy.url, no_proxy: 'localhost' }), false, 'case'],
+    ['NO_PROXY is *', () => ({ ...both('http_proxy', proxy.url), ...both('no_proxy', '*') }), false],
+    ['NO_PROXY is *.localhost (subdomains only)', () => ({ ...both('http_proxy', proxy.url), ...both('no_proxy', '*.localhost') }), true],
+    ['NO_PROXY names the host and its port', () => ({ ...both('http_proxy', proxy.url), ...both('no_proxy', `localhost:${port}`) }), false],
+    ['NO_PROXY names the host and another port', () => ({ ...both('http_proxy', proxy.url), ...both('no_proxy', `localhost:${port + 1}`) }), true],
+    ['an empty http_proxy shadows HTTP_PROXY', () => ({ http_proxy: '', HTTP_PROXY: proxy.url }), false, 'case'],
+    ['only HTTPS_PROXY is set', () => both('https_proxy', proxy.url), false]
+  ].forEach(function ([label, vars, proxied, caseSensitive]) {
+    it(`should ${proxied ? 'go through the proxy' : 'connect directly'} when ${label}`, async function () {
+      if (caseSensitive) notOnWindows(this);
+      expect(await outcome(target(), { vars: vars() })).to.equal('resolved');
+      if (proxied) expect(proxy.requests[0].line).to.equal(`HEAD http://localhost:${port}/`);
+      else expect(proxy.requests).to.have.length(0);
+    });
+  });
 });
 
 // Plain-http auth/headers/validateStatus parity: no TLS or proxy, so no openssl gate.
