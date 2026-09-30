@@ -24,6 +24,22 @@ const expect = chai.expect;
 
 const FAST = { timeout: 2000, interval: 100, window: 100, tcpTimeout: 500 };
 
+// Servers opened by a test; closed after each test in both suites below.
+let servers = [];
+function closeServers(done) {
+  const toClose = servers;
+  servers = [];
+  let pending = toClose.length;
+  if (!pending) return done();
+  toClose.forEach((s) => s.close(() => { if (--pending === 0) done(); }));
+}
+
+function listenHttp(handler, cb) {
+  const server = http.createServer(handler);
+  servers.push(server);
+  server.listen(0, 'localhost', () => cb(server.address().port));
+}
+
 describe('https/tls and proxy parity', function () {
   this.timeout(6000);
 
@@ -57,14 +73,7 @@ describe('https/tls and proxy parity', function () {
     fs.rmSync(certDir, { recursive: true, force: true });
   });
 
-  let servers = [];
-  afterEach(function (done) {
-    const toClose = servers;
-    servers = [];
-    let pending = toClose.length;
-    if (!pending) return done();
-    toClose.forEach((s) => s.close(() => { if (--pending === 0) done(); }));
-  });
+  afterEach(closeServers);
 
   function listenHttps(handler, cb) {
     const server = https.createServer({ key, cert }, handler);
@@ -137,24 +146,6 @@ describe('https/tls and proxy parity', function () {
       waitOn({ resources: ['http://unix:' + sockPath + ':/'], ...FAST }, function (err) {
         restore();
         expect(err).to.not.be.ok; // socket check bypasses the proxy
-        done();
-      });
-    });
-  });
-
-  function listenHttp(handler, cb) {
-    const server = http.createServer(handler);
-    servers.push(server);
-    server.listen(0, 'localhost', () => cb(server.address().port));
-  }
-
-  it('should send a Basic Authorization header built from opts.auth', function (done) {
-    let seen;
-    listenHttp((req, res) => { seen = req.headers.authorization; res.statusCode = 200; res.end('ok'); }, function (port) {
-      waitOn({ resources: [`http://localhost:${port}/`], auth: { username: 'user', password: 'p@ss/word' }, ...FAST }, function (err) {
-        expect(err).to.not.be.ok;
-        const expected = 'Basic ' + Buffer.from('user:p@ss/word').toString('base64');
-        expect(seen).to.equal(expected);
         done();
       });
     });
@@ -238,6 +229,26 @@ describe('https/tls and proxy parity', function () {
     }
     expect(threw).to.equal(false);
   });
+
+});
+
+// Plain-http auth/headers/validateStatus parity: no TLS or proxy, so no openssl gate.
+describe('plain http auth, headers and validateStatus parity', function () {
+  this.timeout(6000);
+  afterEach(closeServers);
+
+  it('should send a Basic Authorization header built from opts.auth', function (done) {
+    let seen;
+    listenHttp((req, res) => { seen = req.headers.authorization; res.statusCode = 200; res.end('ok'); }, function (port) {
+      waitOn({ resources: [`http://localhost:${port}/`], auth: { username: 'user', password: 'p@ss/word' }, ...FAST }, function (err) {
+        expect(err).to.not.be.ok;
+        const expected = 'Basic ' + Buffer.from('user:p@ss/word').toString('base64');
+        expect(seen).to.equal(expected);
+        done();
+      });
+    });
+  });
+
 
   // ---- B2: opts.auth -> Basic header, axios parity ----
   // capture the Authorization header the server actually receives.
