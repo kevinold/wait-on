@@ -25,6 +25,7 @@
   },
   "license": "MIT",
   "scripts": {
+    "bench:startup": "node scripts/bench-startup.js",
     "build:napi": "node scripts/build-napi.js",
     "ci:rs": "node scripts/ci-rs.js",
     "lint": "eslint \"lib/**/*.js\" \"test/**/*.js\" \"scripts/**/*.js\" \"bin/wait-on\"",

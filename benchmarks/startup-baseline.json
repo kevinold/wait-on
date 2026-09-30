@@ -1,0 +1,8 @@
+{
+  "threshold": {
+    "relative": 0.25,
+    "floorMs": 50
+  },
+  "runs": 20,
+  "recorded": {}
+}
