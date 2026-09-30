@@ -179,6 +179,22 @@ describe('engine selection', function () {
       expect(addon.version()).to.equal(workspaceVersion());
       expect(addon.noop()).to.equal(undefined);
     });
+
+    it('should answer fileSize from the built addon when a host prebuild exists', async function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      const addon = require(addonPath({}));
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-filesize-'));
+      try {
+        const file = path.join(dir, 'f');
+        fs.writeFileSync(file, '12345');
+        const pending = addon.fileSize(file);
+        expect(pending).to.be.an.instanceof(Promise);
+        expect(await pending).to.equal(5);
+        expect(await addon.fileSize(path.join(dir, 'missing'))).to.equal(-1);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('invalid value', function () {
