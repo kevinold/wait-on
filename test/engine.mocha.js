@@ -4,7 +4,6 @@
 // silent JS fallback) or rust-strict (addon load failure is an error).
 // WAIT_ON_NATIVE_LIBRARY_PATH points the loader at a specific addon file.
 
-const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,40 +13,15 @@ const { expect } = require('chai');
 const waitOn = require('../lib/wait-on');
 const { resolveEngine, prebuildDir, isMusl, addonPath } = require('../lib/engine');
 
-const CLI_PATH = path.resolve(__dirname, '../bin/wait-on');
+const { withEnv, runCLI: runCLIWith } = require('./helpers/engine-env');
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
 const POISON = path.join(os.tmpdir(), `wait-on-no-such-addon-${process.pid}`, 'wait-on.node');
-const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH', 'WAIT_ON_FAKE_FILE_SIZE'];
 const OPTS = { resources: [__filename], timeout: 1000, interval: 100, window: 100 };
 
-// Run fn with the engine env vars set exactly to vars (unset when absent), then restore.
-async function withEnv(vars, fn) {
-  const saved = {};
-  for (const k of ENGINE_VARS) {
-    saved[k] = process.env[k];
-    if (vars[k] === undefined) delete process.env[k];
-    else process.env[k] = vars[k];
-  }
-  try {
-    return await fn();
-  } finally {
-    for (const k of ENGINE_VARS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-  }
-}
-
 function runCLI(vars, resource = __filename) {
-  const env = { ...process.env };
-  for (const k of ENGINE_VARS) {
-    if (vars[k] === undefined) delete env[k];
-    else env[k] = vars[k];
-  }
-  const args = [CLI_PATH, resource, '-t', '1000', '-i', '100', '-w', '100'];
-  const r = childProcess.spawnSync(process.execPath, args, { env, encoding: 'utf8' });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+  return runCLIWith(vars, [resource, '-t', '1000', '-i', '100', '-w', '100']);
 }
 
 function callbackError(vars) {

@@ -21,13 +21,14 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/coverage.mocha.js` | branches the main suites miss (validation errors, dispatcher options, verbose, CLI help) |
 | `test/native-helpers.mocha.js` | pure helpers exposed via `_internal` |
 | `test/engine.mocha.js` | `WAIT_ON_ENGINE` selection, fallback and errors (API and CLI), prebuild path resolution, `file:` probe routing (stub addon) and the real addon's `fileSize` |
+| `test/engine-checks.mocha.js` | tcp/socket dispatch to the addon: fixture addon (always runs) and real addon (skips without a host prebuild) |
 | `test/rust-pending.mocha.js` | the Rust pending list hooks (fixture specs in a mocha subprocess) |
 | `test/scripts.mocha.js` | planning functions behind `build:napi` and `ci:rs` |
 | `test/rust-scaffold.mocha.js` | toolchain pin equals the workspace MSRV; `Cargo.lock` committed |
 | `crates/wait-on-core` `#[test]`s | Rust unit tests (`cargo test --workspace`) |
 | `test/types.test-d.ts` | `index.d.ts` type tests (`npm run test:types`) |
 
-Shared fixtures: `test/config-http-resources.js`, `test/config-headers.js`, `test/config-status-codes.js`. Engine fixtures live under `test/fixtures/` (outside the `*.mocha.js` glob): `fake-addon.js` stands in for the native addon via `WAIT_ON_NATIVE_LIBRARY_PATH`. Its `fileSize` records each probed path in `calls` and answers a constant (`WAIT_ON_FAKE_FILE_SIZE`, default `1`) that JS cannot produce for a missing file, so a success proves the Rust route ran.
+Shared fixtures: `test/config-http-resources.js`, `test/config-headers.js`, `test/config-status-codes.js`. Engine fixtures live under `test/fixtures/` (outside the `*.mocha.js` glob): `fake-addon.js` stands in for the native addon via `WAIT_ON_NATIVE_LIBRARY_PATH`. Its `fileSize` records each probed path in `calls` and answers a constant (`WAIT_ON_FAKE_FILE_SIZE`, default `1`) that JS cannot produce for a missing file, so a success proves the Rust route ran. `fake-addon-checks.js` extends it with `tcpCheck`/`socketCheck`, answers per `WAIT_ON_FAKE_ADDON_ANSWER` (`ready`, `refused`, `timeout`), records calls in `module.exports.calls` and appends them to the file in `WAIT_ON_FAKE_ADDON_LOG` (CLI subprocess proof). `test/helpers/engine-env.js` has `withEnv` / `runCLI`.
 
 ## Conformance and property tests
 
@@ -58,6 +59,8 @@ The CLI conformance suites are language-agnostic spawn tests and `parser-propert
 
 The same suites run once per engine: `npm test` (CI `build` job) runs them under JS, and `npm run ci:rs` (CI `rust` job, ubuntu/macos/windows) builds the host addon and runs them again with `WAIT_ON_ENGINE=rust-strict`. The env var reaches CLI subprocess tests through the inherited environment. Tests that pin a particular engine (`test/engine.mocha.js`) set and restore `WAIT_ON_ENGINE` themselves, so they pass under either run. The real-addon case skips when no host prebuild exists and always runs under `ci:rs`.
 
+**Proving the Rust path ran.** A passing tcp/socket test alone could be the JS fallback. The fixture suite asserts the fixture saw the call; the real-addon suite spies on the export of the addon object `resolveEngine` returns, and the CLI case checks for `(os error` in `--verbose` output (Rust's reason text; Node prints `ECONNREFUSED`). The #82 `TCPSocketWrap` leak test passes trivially under Rust (no Node handle is opened); the #82 close tests, where the server sees the close, are the real guard.
+
 ## Rust pending list
 
-[`test/rust-pending.js`](../../test/rust-pending.js) lists tests that cannot pass on Rust yet, by mocha full title (describe titles and test title, space-joined). It is empty today. Its root hooks are composed into `test/frozen-clock.js`, the root-hook plugin `.mocharc.json` already loads. Under `WAIT_ON_ENGINE=rust` or `rust-strict`, a listed test reports pending, and a listed title that no suite registers fails the run so stale entries cannot pile up. Under JS the list has no effect. Each lane shrinks it; it must be empty before the spike PR leaves draft.
+[`test/rust-pending.js`](../../test/rust-pending.js) lists tests that cannot pass on Rust yet, by mocha full title (describe titles and test title, space-joined). It is empty today (L2 moved `tcp:`/`socket:` to Rust with no entries). Its root hooks are composed into `test/frozen-clock.js`, the root-hook plugin `.mocharc.json` already loads. Under `WAIT_ON_ENGINE=rust` or `rust-strict`, a listed test reports pending, and a listed title that no suite registers fails the run so stale entries cannot pile up. Under JS the list has no effect. Each lane shrinks it; it must be empty before the spike PR leaves draft.
