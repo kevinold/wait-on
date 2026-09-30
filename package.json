@@ -11,6 +11,7 @@
   "files": [
     "bin/",
     "lib/",
+    "prebuilds/",
     "exampleConfig.js",
     "index.d.ts"
   ],
