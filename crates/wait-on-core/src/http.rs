@@ -106,9 +106,9 @@ impl HttpChecker {
         for (k, v) in &self.headers {
             req = req.header(k, v);
         }
-        let resp = match req.send().await {
+        let mut resp = match req.send().await {
             Ok(r) => r,
-            Err(e) => return not_ready(None, &e),
+            Err(e) => return not_ready(&e),
         };
         let status = resp.status();
         let mut out = HttpOutcome {
@@ -121,20 +121,26 @@ impl HttpChecker {
             error: None,
         };
         // GET reads the body only when the status passed, under the same timeout.
-        if out.ok
-            && self.method == Method::GET
-            && let Err(e) = resp.bytes().await
-        {
-            out.ok = false;
-            out.error = Some(error_chain(&e));
+        if out.ok && self.method == Method::GET {
+            // drain chunk by chunk: the body only has to arrive in time, never be kept
+            loop {
+                match resp.chunk().await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(e) => {
+                        out.ok = false;
+                        out.error = Some(error_chain(&e));
+                        break;
+                    }
+                }
+            }
         }
         out
     }
 }
 
-fn not_ready(status: Option<u16>, e: &reqwest::Error) -> HttpOutcome {
+fn not_ready(e: &reqwest::Error) -> HttpOutcome {
     HttpOutcome {
-        status,
         error: Some(error_chain(e)),
         ..Default::default()
     }
