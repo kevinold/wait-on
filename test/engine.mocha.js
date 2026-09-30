@@ -195,6 +195,18 @@ describe('engine selection', function () {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it('should answer runCommand from the built addon when a host prebuild exists', async function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      const addon = require(addonPath({}));
+      const pending = addon.runCommand('node -e "process.exit(0)"', 0);
+      expect(pending).to.be.an.instanceof(Promise);
+      expect((await pending).ok).to.equal(true);
+      const failed = await addon.runCommand('node -e "console.error(\'boom\'); process.exit(3)"', 0);
+      expect(failed.ok).to.equal(false);
+      expect(failed.error).to.match(/^Command failed: /);
+      expect(failed.error).to.include('boom');
+    });
   });
 
   describe('invalid value', function () {
