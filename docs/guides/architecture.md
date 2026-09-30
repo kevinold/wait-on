@@ -33,6 +33,7 @@ The addon exposes `version()` (the crate version), `noop()`, and the resource ch
 Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7). `waitOnImpl` passes the loaded addon (`null` under `js` or a `rust` fallback) into the resource factories, and each ported factory asks the addon instead of its JS check when one is present.
 
 - **`file:` (L3):** `wait_on_core::file_size` stats the path (following symlinks) and returns its size, or `-1` on any error, the same contract as JS `getFileSize` (a missing file, `EPERM`, and Windows delete-pending errors all read as `-1`). The addon exports it as `fileSize(path): Promise<number>`, an napi `AsyncTask` on the libuv threadpool, so a slow stat never blocks the event loop. `createFileResource$` calls it in place of `getFileSize`; the `window` stabilization `scan`, the reverse check, and the verbose lines stay in JS and are unchanged. Known difference: paths cross into Rust as UTF-8, so a Windows path containing an unpaired UTF-16 surrogate (which `fs.stat` accepts) reads as `-1` under Rust.
+- **`command:` (L6):** `wait_on_core::run_command` runs the command through the same shell as Node's `child_process.exec`: `/bin/sh -c <command>` on POSIX, and on Windows `ComSpec` (default `cmd.exe`) with `/d /s /c "<command>"` passed verbatim. The child inherits the environment and working directory. Exit 0 is ready; a non-zero exit, a signal, a spawn failure or a `commandTimeout` kill is not ready. With `commandTimeout > 0` the shell is killed at the bound, and the result is also returned at the bound when the shell exited but a backgrounded grandchild still holds stdout (as Node does). The addon exports it as `runCommand(command, timeoutMs): Promise<{ ok, stdout, error }>`. The promise never rejects and each attempt runs on its own thread, not the libuv threadpool, so slow commands never delay `fileSize` or DNS work. `createCommand$` calls it in place of `commandPasses`; `exhaustMap`, the reverse check (`negateAsync`) and the verbose line shapes stay in JS. Known differences from JS: stdin is empty (Node gives an open pipe), output beyond 1 MiB per stream is dropped instead of failing the attempt (Node's `maxBuffer`), the timeout error reads `Command failed: <cmd>\nkilled after <ms>ms`, and a `ComSpec` that is not `cmd.exe` still gets the `cmd.exe` arguments.
 
 - **`tcp:` / `socket:` (L2):** `crates/wait-on-core/src/{tcp,socket}.rs`, exported as async `tcpCheck(host, port, timeoutMs)` and `socketCheck(path)`, each resolving to `{ ready, timedOut, reason }` (`reason` is `null` when ready). They run on napi's tokio runtime (napi feature `async`), not the libuv threadpool, so a pending connect never blocks Node's fs/dns work. `createTCP$` / `createSocket$` call the export when the loaded addon has it, else the JS check (per export, under `rust` and `rust-strict`). JS still parses `host:port`, applies `negateAsync` for reverse and prints the verbose lines.
 - **tcp:** resolves the host and races one connect per address (Windows reports a refused loopback connect only after ~2 s, so sequential tries would starve the IPv4 fallback); `tcpTimeout` bounds the whole attempt, `0` means no timeout.
@@ -40,6 +41,48 @@ Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`soc
 - **Deliberate difference:** under `--verbose` the not-ready reason is Rust's error text (e.g. `Connection refused (os error 61)`), not Node's `ECONNREFUSED`.
 
 Status: planned (lane L7)
+
+### http(s) (L4)
+
+`http:`/`https:` (HEAD) and `http-get:`/`https-get:` (GET) run in Rust when the Rust engine is loaded and no L5 condition holds. `createHTTP$` decides once per resource with `routesHttpToRust` ([`lib/wait-on.js`](../../lib/wait-on.js)):
+
+| Condition on validated options and env | Check |
+|---|---|
+| Addon not loaded (`js`, or `rust` with load failure) | JS (undici) |
+| `http://unix:` socket path | JS (L5) |
+| Any of `ca`, `cert`, `key`, `passphrase` | JS (L5) |
+| `strictSSL: true` | JS (L5) |
+| `proxy` set (object or `false`) | JS (L5) |
+| `HTTP_PROXY` / `http_proxy` / `HTTPS_PROXY` / `https_proxy` set | JS (L5) |
+| URL with userinfo (`user:pass@`) | JS (undici rejects it; kept for parity) |
+| Otherwise: plain http, and https with the default `strictSSL: false` | Rust |
+
+- **Checker.** `crates/wait-on-core/src/http.rs` holds `HttpChecker`: one reqwest `Client` per resource (rustls with the `ring` provider, no OpenSSL, `no_proxy()`, invalid certs accepted), mirroring the one undici dispatcher per resource on the JS path. `followRedirect: true` maps to `redirect::Policy::limited(20)`, `false` to `Policy::none()` so the 3xx is the status checked. `httpTimeout` becomes a whole-request timeout covering the GET body; unset means none. GET reads the body only when the status passed.
+- **Binding.** `crates/wait-on-napi/src/http.rs` exposes `new HttpChecker({ url, method, headers, followRedirect, timeoutMs })`, `check(validateStatus?)` (a Promise of `{ ok, status?, statusText?, error? }` that never rejects for not-ready) and `cancel()`.
+- **`validateStatus` across the boundary.** JS wraps the user function as `s => Boolean(fn(s))` with a throw mapped to `false`, then passes it as a napi `ThreadsafeFunction` (`CalleeHandled = false`, weak). Rust calls it with `call_async_catch`, so a JS throw or non-boolean is an `Err` (not ready), never a fatal exception. The JS thread is free while it awaits the check Promise, so callbacks from concurrent checks under `simultaneous` do not deadlock.
+- **Headers and auth.** JS builds the final header map (the `auth` Basic header and its case-insensitive override) for both engines and passes string values (`String(v)`); Rust sets them verbatim.
+- **Teardown.** `finalize` calls `checker.cancel()`, a tokio `watch` flag: every in-flight check and any later one resolves `{ ok: false, error: 'cancelled' }`. It also drops the checker's `Client`, so pooled keep-alive sockets close as the JS path's `dispatcher.close()` does; otherwise each finished resource held an idle connection until reqwest's pool timeout, which exhausted sockets (`ENOBUFS`) across a full test run on Windows. Without it a pending Promise to a hung server would keep an API caller's process alive after `waitOn` settles (`test/engine.mocha.js`, process lifetime).
+- `reverse` is still applied in JS (`negateAsync`) to the addon's un-negated `ok`.
+
+Deliberate JS vs Rust differences on the Rust path:
+
+- Default request headers: undici sends `user-agent: undici`, `accept-language`, `sec-fetch-mode`; reqwest sends `accept: */*` only.
+- Redirect hop limit: 20 on both (reqwest `Policy::limited(20)`, undici fetch's limit).
+- TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout` (under `reverse` it reads as gone on the first poll).
+- `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.
+
+**Per-check overhead** (`node benchmarks/http-ffi.js --iterations 200`; darwin arm64, Node v26.3.1). Per-call rows time a full `waitOn` against a ready local server (one new checker and connection each); `steady` rows time the gap between polls on one resource (connection reuse); `ffi noop` is the bare boundary (`addon.noop()`, mean of 1000 calls).
+
+| configuration | median ms | p95 ms |
+|---|---|---|
+| js | 1.959 | 3.181 |
+| js steady | 1.497 | 1.779 |
+| rust-strict | 1.494 | 1.697 |
+| rust-strict + validateStatus | 1.556 | 1.735 |
+| rust-strict steady | 1.272 | 1.382 |
+| rust-strict ffi noop | 0.000014 | 0.000020 |
+
+The bare FFI call is about 14 ns, and the `validateStatus` threadsafe round trip adds about 0.06 ms per check. The Rust check is not slower than the JS check on this host. L8 owns the regression threshold.
 
 ## Prebuilds and loader
 
