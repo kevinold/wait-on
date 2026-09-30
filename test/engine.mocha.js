@@ -447,7 +447,10 @@ describe('engine selection', function () {
 
       it('should time out through a dead env proxy without constructing a checker when HTTP_PROXY is set', async function () {
         const port = await httpPort();
-        const vars = { ...RUST, HTTP_PROXY: 'http://127.0.0.1:1', NO_PROXY: undefined, no_proxy: undefined };
+        // both spellings: Windows env names are case-insensitive, so clearing http_proxy
+        // after setting HTTP_PROXY would unset the dead proxy there
+        const dead = 'http://127.0.0.1:1';
+        const vars = { ...RUST, HTTP_PROXY: dead, http_proxy: dead, NO_PROXY: undefined, no_proxy: undefined };
         expect(await outcome(vars, { resources: [`http://localhost:${port}/`], timeout: 600 })).to.match(/Timed out/);
         expect(counting.calls).to.have.length(0);
       });
