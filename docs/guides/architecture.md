@@ -26,11 +26,13 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
 
-The addon exposes `version()` (the crate version) and `noop()`. No resource check runs in Rust yet: under a loaded Rust engine every resource still uses the JS checks.
+The addon exposes `version()` (the crate version), `noop()`, and the resource checks ported so far (below). Resources whose check is not ported yet keep using the JS checks under a loaded Rust engine.
 
 ## Resource checks in Rust
 
-Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7).
+Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7). `waitOnImpl` passes the loaded addon (`null` under `js` or a `rust` fallback) into the resource factories, and each ported factory asks the addon instead of its JS check when one is present.
+
+- **`file:` (L3):** `wait_on_core::file_size` stats the path (following symlinks) and returns its size, or `-1` on any error, the same contract as JS `getFileSize` (a missing file, `EPERM`, and Windows delete-pending errors all read as `-1`). The addon exports it as `fileSize(path): Promise<number>`, an napi `AsyncTask` on the libuv threadpool, so a slow stat never blocks the event loop. `createFileResource$` calls it in place of `getFileSize`; the `window` stabilization `scan`, the reverse check, and the verbose lines stay in JS and are unchanged. Known difference: paths cross into Rust as UTF-8, so a Windows path containing an unpaired UTF-16 surrogate (which `fs.stat` accepts) reads as `-1` under Rust.
 
 Status: planned (lane L7)
 
