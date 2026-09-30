@@ -438,8 +438,17 @@ describe('engine selection', function () {
       });
     });
 
+    it('should time out like JS without constructing a checker when the url has userinfo', async function () {
+      const port = await httpPort();
+      const opts = { resources: [`http://u:p@localhost:${port}/`], timeout: 600 };
+      const js = await outcome({ WAIT_ON_ENGINE: 'js', ...NO_PROXY_ENV }, opts);
+      expect(js).to.match(/Timed out/);
+      expect(await outcome(RUST, opts)).to.equal(js);
+      expect(constructs()).to.have.length(0);
+    });
+
     describe('routesHttpToRust', function () {
-      const base = { addon: {}, validatedOpts: { strictSSL: false }, socketPath: undefined, env: {} };
+      const base = { addon: {}, validatedOpts: { strictSSL: false }, socketPath: undefined, env: {}, url: 'http://localhost:1/' };
       const cells = [
         ['no addon is loaded', { addon: null }],
         ['a unix socketPath is set', { socketPath: '/tmp/sock' }],
@@ -453,7 +462,8 @@ describe('engine selection', function () {
         ['HTTP_PROXY is set', { env: { HTTP_PROXY: 'http://p:1' } }],
         ['http_proxy is set', { env: { http_proxy: 'http://p:1' } }],
         ['HTTPS_PROXY is set', { env: { HTTPS_PROXY: 'http://p:1' } }],
-        ['https_proxy is set', { env: { https_proxy: 'http://p:1' } }]
+        ['https_proxy is set', { env: { https_proxy: 'http://p:1' } }],
+        ['the url has userinfo', { url: 'http://u:p@localhost:1/' }]
       ];
       for (const [label, override] of cells) {
         it(`should route to JS when ${label}`, function () {

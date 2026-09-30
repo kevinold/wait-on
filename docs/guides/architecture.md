@@ -46,6 +46,7 @@ Status: planned (lane L7)
 | `strictSSL: true` | JS (L5) |
 | `proxy` set (object or `false`) | JS (L5) |
 | `HTTP_PROXY` / `http_proxy` / `HTTPS_PROXY` / `https_proxy` set | JS (L5) |
+| URL with userinfo (`user:pass@`) | JS (undici rejects it; kept for parity) |
 | Otherwise: plain http, and https with the default `strictSSL: false` | Rust |
 
 - **Checker.** `crates/wait-on-core/src/http.rs` holds `HttpChecker`: one reqwest `Client` per resource (rustls with the `ring` provider, no OpenSSL, `no_proxy()`, invalid certs accepted), mirroring the one undici dispatcher per resource on the JS path. `followRedirect: true` maps to `redirect::Policy::limited(20)`, `false` to `Policy::none()` so the 3xx is the status checked. `httpTimeout` becomes a whole-request timeout covering the GET body; unset means none. GET reads the body only when the status passed.
