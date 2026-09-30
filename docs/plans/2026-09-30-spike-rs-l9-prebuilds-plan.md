@@ -314,3 +314,5 @@ Matrix coverage:
 ---
 
 ## Resume notes
+
+- 2026-09-30: U1 landed (eb0dfc5): `TARGETS` exported, `scripts/ci-rs-package.js` guard/pack check/size report/SHA256SUMS, `ci:rs:package` script, gitignore. Local host-only run: packed 410942, unpacked 1193171, js-only unpacked 61283, darwin-arm64 1131888. Next: U2 (probe + install matrix), U3 (containers), U4 (guides), then lfg steps 3-11 (simplify, review, compound, PR `Closes #61`, CI).
