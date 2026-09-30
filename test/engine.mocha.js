@@ -8,7 +8,7 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { describe, it, before, after } = require('mocha');
+const { describe, it, before, after, beforeEach } = require('mocha');
 const { expect } = require('chai');
 
 const waitOn = require('../lib/wait-on');
@@ -220,16 +220,18 @@ describe('engine selection', function () {
   });
 
   describe('file: probe routing', function () {
-    // The fixture answers every probe with a constant size (1, or WAIT_ON_FAKE_FILE_SIZE),
-    // an answer JS cannot give for these paths, so success proves the addon was asked.
+    // fake-addon.js answers a size JS cannot give for these paths (see its header)
     const fake = require(FIXTURE_ADDON);
     const missing = path.join(os.tmpdir(), `wait-on-no-such-file-${process.pid}`);
     const rust = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
     const fast = { timeout: 1000, interval: 100, window: 100 };
 
+    beforeEach(function () {
+      fake.calls.length = 0;
+    });
+
     for (const resource of [missing, `file:${missing}`]) {
       it(`should succeed on a missing file under rust when the stub addon answers the probe (${resource === missing ? 'bare path' : 'file: prefix'})`, async function () {
-        fake.calls.length = 0;
         await withEnv(rust, () => waitOn({ ...fast, resources: [resource] }));
         expect(fake.calls).to.include(missing);
       });
@@ -243,7 +245,6 @@ describe('engine selection', function () {
     });
 
     it('should never call the stub and time out on a missing file under js', async function () {
-      fake.calls.length = 0;
       let err;
       await withEnv({ ...rust, WAIT_ON_ENGINE: 'js' }, () => waitOn({ ...fast, timeout: 300, resources: [missing] })).catch(
         (e) => (err = e)
@@ -253,7 +254,6 @@ describe('engine selection', function () {
     });
 
     it('should succeed in reverse mode on an existing file when the stub reports -1 under rust', async function () {
-      fake.calls.length = 0;
       await withEnv({ ...rust, WAIT_ON_FAKE_FILE_SIZE: '-1' }, () =>
         waitOn({ ...fast, reverse: true, resources: [__filename] })
       );
