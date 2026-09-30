@@ -307,3 +307,8 @@ Matrix coverage (engine × resource × reverse × tcpTimeout):
 ---
 
 ## Resume notes
+
+- 2026-09-30: U1–U5 implemented (native subagents; U2+U3 one worker). `ci:rs` 351 passing, 0 pending; `test/rust-pending.js` still `[]`.
+- Review (full, incl. cross-model codex pass): 1 actionable finding (real-addon timeout test did not prove `timedOut`) fixed; residual risks recorded in the PR body (Windows busy named pipe under reverse, `tcpTimeout` ≥ 2^32 across the u32 bridge).
+- Merged `origin/spike-next-rs` after L3 (#55, `file:`): kept both addon surfaces (`fileSize` AsyncTask + `tcpCheck`/`socketCheck` async fn); `fake-addon-checks.js` now spreads `fake-addon.js` so it also answers `fileSize`; `engine-env.js` scopes `WAIT_ON_FAKE_FILE_SIZE`.
+- Local runs collide with sibling worktrees' mocha on fixed ports (3000/3001/3011): wait and re-run; not a lane defect.
