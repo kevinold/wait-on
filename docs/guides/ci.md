@@ -7,7 +7,7 @@ Two files: [`.github/workflows/node.js.yml`](../../.github/workflows/node.js.yml
 | Job | Runs on | Needs | Does |
 |---|---|---|---|
 | `build` | `ubuntu-latest`, `windows-latest` × Node `22.x`, `24.x`, `26.x` | — | `npm ci --engine-strict`, `npm run build --if-present`, `npm test` |
-| `rust` | `ubuntu-latest`, `macos-latest`, `windows-latest`, Node `24.x` | — | `rustup toolchain install` (gated on `rust-toolchain.toml`), `Swatinem/rust-cache@v2` and `taiki-e/install-action@v2` with `tool: cargo-deny` (gated on `Cargo.toml`), `npm ci --engine-strict`, `npm run --if-present ci:rs` |
+| `rust` | `ubuntu-latest`, `macos-latest`, `windows-latest`, Node `24.x` | — | `rustup toolchain install` (gated on `rust-toolchain.toml`), `Swatinem/rust-cache@v2` and `taiki-e/install-action@v2` with `tool: cargo-deny,cargo-vet` (gated on `Cargo.toml`), `npm ci --engine-strict`, `npm run --if-present ci:rs` |
 | `napi` | 8-row target matrix below, `fail-fast: false`, Node `24.x` | — | `rustup toolchain install` + `rustup target add <target>` (gated on `rust-toolchain.toml`), rust-cache keyed by target and `mlugg/setup-zig@v2` when `matrix.zig` (gated on `Cargo.toml`), `npm ci --engine-strict`, `npm run --if-present build:napi -- --target <target> <extra-args>`, upload `prebuilds/**` as `prebuilds-<target>` (`if-no-files-found: ignore`) |
 | `package` | `ubuntu-latest`, Node `24.x` | `napi` | download `prebuilds-*` (merged) into `prebuilds/`, `npm ci --engine-strict`, `npm run --if-present ci:rs:package`, upload `wait-on-*.tgz` + `SHA256SUMS` as `package` (`if-no-files-found: ignore`) |
 | `prerelease` | calls `rs-prerelease.yml` | `build`, `rust`, `package` | only on `push` to `refs/heads/spike-next-rs` in `kevinold/wait-on`; `permissions: contents: write` |
@@ -20,7 +20,7 @@ CI calls these with `npm run --if-present`; an undefined script is a green no-op
 
 | Script | Called by | Input | Must produce | Status |
 |---|---|---|---|---|
-| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `npm ci` already done | exit code only; builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict` | exists (L1, `scripts/ci-rs.js`) |
+| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `cargo-vet`, `npm ci` already done | exit code only; runs `cargo vet --locked` first (the `package.json` entry, so an unvetted crate fails before any build), then builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict` | exists (L1, `scripts/ci-rs.js`; vet gate L11) |
 | `build:napi` | `napi` (8 rows) | `-- --target <triple> [extra-args]` (forwarded to `napi build`; `-x` on musl rows) | the target's addon under `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (uploaded as `prebuilds/**`) | exists (L1, `scripts/build-napi.js`); its `TARGETS` table is the one list of the eight targets (L9) |
 | `ci:rs:package` | `package` | all targets' `prebuilds/**` already downloaded into `prebuilds/` | `wait-on-*.tgz` and `SHA256SUMS` at the repo root; install-matrix checks and size report | exists (L9, `scripts/ci-rs-package.js`); see [below](#cirspackage) |
 
@@ -72,7 +72,7 @@ Native runners wherever one exists. `x86_64-apple-darwin` cross-compiles on arm6
 
 ## No-op gating
 
-Every Rust-specific step has a step-level guard: toolchain steps `if: hashFiles('rust-toolchain.toml') != ''`, cache/cargo-deny/zig steps `if: hashFiles('Cargo.toml') != ''`. Script steps always run and no-op through `--if-present`. So `rust`, `napi`, and `package` stay green with those steps `skipped` until a lane adds `Cargo.toml` + `rust-toolchain.toml`. A lane that defines `ci:rs` must add both files in the same PR, or `ci:rs` runs without a toolchain.
+Every Rust-specific step has a step-level guard: toolchain steps `if: hashFiles('rust-toolchain.toml') != ''`, cache/cargo-deny+cargo-vet install/zig steps `if: hashFiles('Cargo.toml') != ''`. Script steps always run and no-op through `--if-present`. So `rust`, `napi`, and `package` stay green with those steps `skipped` until a lane adds `Cargo.toml` + `rust-toolchain.toml`. A lane that defines `ci:rs` must add both files in the same PR, or `ci:rs` runs without a toolchain.
 
 ## Why `rs-prerelease.yml` is reusable
 

@@ -24,7 +24,15 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 ## Rust engine layout
 
-Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
+Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy and `supply-chain/` the `cargo vet` store ([Supply chain](#supply-chain)).
+
+## Supply chain
+
+Two gates run on every `npm run ci:rs` (R23). `cargo deny check` (`deny.toml`) gates advisories, licenses, bans and sources. `cargo vet --locked` (`supply-chain/`) runs first and fails on any third-party crate version in `Cargo.lock` that no imported audit, local audit (`audits.toml`) or exemption (`config.toml`) covers, so a new or bumped crate cannot reach the addon unreviewed. `imports.lock` pins the imported audits, and `--locked` never fetches new ones. Workspace members (`wait-on-core`, `wait-on-napi`) are not vetted.
+
+Trust sources (`[imports]` in `supply-chain/config.toml`): Mozilla, Google, Bytecode Alliance, ZcashFoundation (URL import of zebra's `audits.toml`, not in the cargo-vet registry), plus ISRG, Embark Studios and Zcash (ECC), each kept because it removed at least one exemption.
+
+Baseline (2026-09-30, L11): 148 third-party crates, 19 fully audited by imports, 129 exempted. Of the exemptions, 63 are small bumps past an audited version (`notes` names the audited base) and 66 have no audited base. Every exemption carries a `notes` reason. A change that raises the exemption count should say why in its PR; the preferred path is certifying (see [development.md](development.md#vetting-a-new-or-bumped-crate)).
 
 The addon exposes `version()` (the crate version), `noop()`, and the resource checks ported so far (below). Resources whose check is not ported yet keep using the JS checks under a loaded Rust engine.
 
