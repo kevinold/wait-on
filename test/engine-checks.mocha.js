@@ -1,6 +1,6 @@
 'use strict';
 
-// L2 (#54): with an addon that exports tcpCheck/socketCheck, tcp: and socket: checks
+// tcp/socket addon checks (#54): with an addon that exports tcpCheck/socketCheck, tcp: and socket: checks
 // go to the addon; reverse and verbose lines stay in JS; an addon lacking an export
 // falls back to the JS check. The fixture addon is the network-edge stub.
 
@@ -232,10 +232,19 @@ describe('addon checks (real addon)', function () {
   });
 
   it('should mark a tcp check timed out at tcpTimeout with the Rust addon', async function () {
-    const { err, elapsed } = await rejection({ resources: ['tcp:10.255.255.1:9'], tcpTimeout: 200, timeout: 600 });
-    expect(err).to.be.an('error');
-    expect(err.message).to.include('Timed out');
-    expect(elapsed).to.be.below(1500);
+    let outcome;
+    const results = await spyOn('tcpCheck', async () => {
+      outcome = await rejection({ resources: ['tcp:10.255.255.1:9'], tcpTimeout: 200, timeout: 600 });
+    });
+    expect(outcome.err).to.be.an('error');
+    expect(outcome.err.message).to.include('Timed out');
+    expect(outcome.elapsed).to.be.below(1500);
+    // Rust answered: timedOut at tcpTimeout, or (host without a route) an immediate OS error.
+    expect(results).to.not.be.empty;
+    const [first] = results;
+    expect(first.ready).to.equal(false);
+    if (!first.timedOut) expect(first.reason).to.include('(os error');
+    else expect(first.reason).to.equal('timed out');
   });
 
   it('should fire the overall timeout while a Rust connect is pending', async function () {

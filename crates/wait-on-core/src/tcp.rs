@@ -16,7 +16,7 @@ pub async fn ready(host: &str, port: u16, timeout_ms: u32) -> Result<(), NotRead
 }
 
 /// Races one connect per resolved address; first success wins (dropping the stream closes it).
-/// Sequential tries lose on Windows, where a refused loopback connect takes ~2 s (KTD3).
+/// Sequential tries lose on Windows, where a refused loopback connect takes ~2 s.
 async fn connect(host: &str, port: u16) -> Result<(), NotReady> {
     let mut attempts = JoinSet::new();
     for addr in lookup_host((host, port)).await.map_err(NotReady::Io)? {
@@ -49,8 +49,14 @@ mod tests {
     async fn times_out_within_bound() {
         // A black-holed address: TimedOut, or an immediate network error on hosts without a route.
         let start = std::time::Instant::now();
-        assert!(ready("10.255.255.1", 9, 200).await.is_err());
-        assert!(start.elapsed() < std::time::Duration::from_millis(1000));
+        let result = ready("10.255.255.1", 9, 200).await;
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_millis(1000));
+        match result {
+            Err(NotReady::TimedOut) => assert!(elapsed >= Duration::from_millis(200)),
+            Err(NotReady::Io(_)) => assert!(elapsed < Duration::from_millis(200)),
+            Ok(()) => panic!("black-holed address reported ready"),
+        }
     }
 
     #[tokio::test]

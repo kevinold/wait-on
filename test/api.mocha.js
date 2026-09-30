@@ -8,6 +8,7 @@ const path = require('path');
 const temp = require('temp');
 const mkdirp = require('mkdirp');
 const { itFrozen } = require('./frozen-clock');
+const { listening } = require('./helpers/cli-conformance');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -231,12 +232,9 @@ describe('api', function () {
   });
 
   // Engine parity cells (#54): run under JS in npm test and against the Rust addon in ci:rs.
-  function listenOn(host) {
-    httpServer = http.createServer();
-    return new Promise((resolve, reject) => {
-      httpServer.once('error', reject);
-      httpServer.listen(0, host, () => resolve(httpServer.address().port));
-    });
+  async function listenOn(host) {
+    httpServer = await listening(http.createServer(), 0, host);
+    return httpServer.address().port;
   }
 
   it('should succeed when a service is listening on a bare tcp port', async function () {

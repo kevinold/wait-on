@@ -1,6 +1,6 @@
 'use strict';
 
-// Stands in for the native addon's tcp/socket checks (network-edge stub, L2 KTD7).
+// Stands in for the native addon's tcp/socket checks (network-edge stub).
 // WAIT_ON_FAKE_ADDON_ANSWER picks the answer: ready (default) | refused | timeout.
 // Every call lands in module.exports.calls and, when WAIT_ON_FAKE_ADDON_LOG names a
 // file, as one JSON line there (proof from a CLI subprocess).
