@@ -7,6 +7,7 @@ const { describe, it } = require('mocha');
 const { expect } = require('chai');
 
 const buildNapi = require('../scripts/build-napi');
+const ciRs = require('../scripts/ci-rs');
 
 describe('build:napi', function () {
   const triples = {
@@ -65,5 +66,29 @@ describe('build:napi', function () {
       extraArgs: ['-x']
     });
     expect(buildNapi.parseArgs([])).to.deep.equal({ target: undefined, extraArgs: [] });
+  });
+});
+
+describe('ci:rs', function () {
+  const repoRoot = path.join('/r');
+  const mocha = require.resolve('mocha/bin/mocha.js');
+
+  it('runs fmt, clippy, test, deny, the host build, then mocha under rust-strict, in that order', function () {
+    const steps = ciRs.steps({ repoRoot });
+    expect(steps.map(({ cmd, args }) => [cmd, ...args])).to.deep.equal([
+      ['cargo', 'fmt', '--all', '--check'],
+      ['cargo', 'clippy', '--workspace', '--all-targets', '--', '-D', 'warnings'],
+      ['cargo', 'test', '--workspace'],
+      ['cargo', 'deny', 'check'],
+      [process.execPath, path.join(repoRoot, 'scripts', 'build-napi.js')],
+      [process.execPath, mocha, '--exit', 'test/**/*.mocha.js']
+    ]);
+    expect(steps[5].env.WAIT_ON_ENGINE).to.equal('rust-strict');
+  });
+
+  it('runs node steps with process.execPath, not npm or a shell', function () {
+    for (const step of ciRs.steps({ repoRoot })) {
+      if (step.cmd !== 'cargo') expect(step.cmd).to.equal(process.execPath);
+    }
   });
 });
