@@ -1,7 +1,7 @@
 //! HTTP(S) readiness check (HEAD/GET) on reqwest + rustls/ring. No proxy, no OpenSSL.
 
 use std::future::Future;
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 use std::time::Duration;
 
 use reqwest::{Client, Method, redirect::Policy};
@@ -34,8 +34,10 @@ pub struct HttpOutcome {
 pub type NoValidate = fn(u16) -> std::future::Ready<Result<bool, std::convert::Infallible>>;
 
 /// One reqwest `Client` per resource, reused across polls, plus a cancel token.
+/// `cancel()` drops the client so its pooled keep-alive sockets close, like the JS
+/// path's `dispatcher.close()` in `finalize`.
 pub struct HttpChecker {
-    client: Client,
+    client: Mutex<Option<Client>>,
     method: Method,
     url: String,
     headers: Vec<(String, String)>,
@@ -65,7 +67,7 @@ impl HttpChecker {
             builder = builder.timeout(Duration::from_millis(ms));
         }
         Ok(Self {
-            client: builder.build().map_err(|e| error_chain(&e))?,
+            client: Mutex::new(Some(builder.build().map_err(|e| error_chain(&e))?)),
             method,
             url: opts.url,
             headers: opts.headers,
@@ -81,20 +83,18 @@ impl HttpChecker {
         F: FnOnce(u16) -> Fut,
         Fut: Future<Output = Result<bool, E>>,
     {
-        let mut cancelled = self.cancel.subscribe();
+        let mut flag = self.cancel.subscribe();
         tokio::select! {
             out = self.send(validate) => out,
             // Resolves at once when already cancelled; the sender lives in `self`.
-            _ = cancelled.wait_for(|c| *c) => HttpOutcome {
-                error: Some("cancelled".into()),
-                ..Default::default()
-            },
+            _ = flag.wait_for(|c| *c) => cancelled(),
         }
     }
 
     /// Settles every in-flight and later `check` as `{ ok: false, error: "cancelled" }`.
     pub fn cancel(&self) {
         self.cancel.send_replace(true);
+        self.client.lock().unwrap().take();
     }
 
     async fn send<F, Fut, E>(&self, validate: Option<F>) -> HttpOutcome
@@ -102,7 +102,10 @@ impl HttpChecker {
         F: FnOnce(u16) -> Fut,
         Fut: Future<Output = Result<bool, E>>,
     {
-        let mut req = self.client.request(self.method.clone(), &self.url);
+        let Some(client) = self.client.lock().unwrap().clone() else {
+            return cancelled();
+        };
+        let mut req = client.request(self.method.clone(), &self.url);
         for (k, v) in &self.headers {
             req = req.header(k, v);
         }
@@ -136,6 +139,13 @@ impl HttpChecker {
             }
         }
         out
+    }
+}
+
+fn cancelled() -> HttpOutcome {
+    HttpOutcome {
+        error: Some("cancelled".into()),
+        ..Default::default()
     }
 }
 
@@ -234,6 +244,37 @@ mod tests {
     }
 
     const CLOSE: &str = "Connection: close\r\n";
+
+    #[tokio::test]
+    async fn cancel_closes_the_pooled_keep_alive_connection() {
+        // JS parity: finalize closes the undici dispatcher, so no idle socket outlives the resource.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let (closed_tx, closed_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf);
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            // keep-alive: a second read returns 0 only when the client closes the socket
+            let _ = s.read(&mut buf);
+            let _ = closed_tx.send(());
+        });
+        let c = checker(url, "GET", true, None);
+        assert!(c.check(None::<NoValidate>).await.ok);
+        c.cancel();
+        // poll asynchronously so the runtime can run the connection task that closes the socket
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while closed_rx.try_recv().is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "the idle pooled connection stayed open after cancel()"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        drop(c);
+    }
 
     #[tokio::test]
     async fn head_200_with_content_length_and_no_body_is_ready() {
