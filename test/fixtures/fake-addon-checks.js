@@ -1,6 +1,6 @@
 'use strict';
 
-// Stands in for the native addon's tcp/socket checks (network-edge stub).
+// fake-addon.js plus the native addon's tcp/socket checks (network-edge stub).
 // WAIT_ON_FAKE_ADDON_ANSWER picks the answer: ready (default) | refused | timeout.
 // Every call lands in module.exports.calls and, when WAIT_ON_FAKE_ADDON_LOG names a
 // file, as one JSON line there (proof from a CLI subprocess).
@@ -22,8 +22,7 @@ function record(call) {
 }
 
 module.exports = {
-  version: () => 'fake',
-  noop() {},
+  ...require('./fake-addon'), // version, noop, fileSize
   tcpCheck: (host, port, timeoutMs) => record({ fn: 'tcpCheck', host, port, timeoutMs }),
   socketCheck: (path) => record({ fn: 'socketCheck', path }),
   calls: []

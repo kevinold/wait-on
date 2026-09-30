@@ -4,7 +4,7 @@ const childProcess = require('child_process');
 const path = require('path');
 
 const CLI_PATH = path.resolve(__dirname, '../../bin/wait-on');
-const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH'];
+const ENGINE_VARS = ['WAIT_ON_ENGINE', 'WAIT_ON_NATIVE_LIBRARY_PATH', 'WAIT_ON_FAKE_FILE_SIZE'];
 
 // The engine vars plus any other key passed: each is set to vars[k], or unset when absent.
 function keysOf(vars) {
