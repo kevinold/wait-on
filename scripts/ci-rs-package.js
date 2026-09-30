@@ -2,13 +2,16 @@
 
 // npm run ci:rs:package [-- --host-only]
 // The CI `package` job's hook: with every target's prebuild downloaded into prebuilds/, refuse a
-// partial bundle, npm pack once, check the tarball's files and manifest, print sizes and write
-// SHA256SUMS next to wait-on-*.tgz. --host-only (developer runs) requires only the host prebuild.
+// partial bundle, npm pack once, check the tarball's files and manifest, print sizes, write
+// SHA256SUMS next to wait-on-*.tgz, then install the tarball (npm, npm --omit=optional, pnpm; scripts
+// disabled) and prove each install loads the host addon from inside the installed package.
+// --host-only (developer runs) requires only the host prebuild.
 // No shell: npm runs as `node $npm_execpath`, so it behaves the same under Windows cmd.
 
 const childProcess = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { TARGETS } = require('./build-napi');
 const { prebuildDir, isMusl } = require('../lib/engine');
@@ -16,6 +19,7 @@ const { prebuildDir, isMusl } = require('../lib/engine');
 const ADDON = 'wait-on.node';
 const NOT_SHIPPED = /^(target|crates|scripts|docs|test|benchmarks)\/|^Cargo\./;
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
+const PNPM_VERSION = '10.34.6';
 
 function expectedPrebuildDirs() {
   return Object.values(TARGETS).map(prebuildDir);
@@ -69,6 +73,31 @@ function sha256sumsLine(file) {
   return `${hex}  ${path.basename(file)}\n`;
 }
 
+// One cell per install shape, all with lifecycle scripts disabled. pnpm comes from the registry via
+// npm exec (no devDependency, no corepack). The addon override is scrubbed so it cannot stand in
+// for the installed prebuild.
+function installCells({ tgz, npmExecPath, env }) {
+  const cellEnv = { ...env };
+  delete cellEnv.WAIT_ON_NATIVE_LIBRARY_PATH;
+  const npmInstall = [npmExecPath, 'install', '--ignore-scripts', '--no-audit', '--no-fund'];
+  return [
+    { name: 'npm', args: [...npmInstall, tgz] },
+    { name: 'npm-omit-optional', args: [...npmInstall, '--omit=optional', tgz] },
+    {
+      name: 'pnpm',
+      args: [npmExecPath, 'exec', '--yes', '--package', `pnpm@${PNPM_VERSION}`, '--', 'pnpm', 'add', tgz, '--ignore-scripts']
+    }
+  ].map((cell) => ({ ...cell, cmd: process.execPath, env: cellEnv }));
+}
+
+function assertInstalledAddon({ realpath, projectRoot, dir }) {
+  const root = fs.realpathSync(projectRoot) + path.sep;
+  const tail = path.join('prebuilds', dir, ADDON);
+  if (!realpath.startsWith(root) || !realpath.endsWith(path.sep + tail)) {
+    throw new Error(`loaded ${realpath}, expected ${tail} inside the installed package under ${root}`);
+  }
+}
+
 function parseArgs(argv) {
   return { hostOnly: argv.includes('--host-only') };
 }
@@ -108,6 +137,21 @@ function main() {
 
   fs.writeFileSync(path.join(repoRoot, 'SHA256SUMS'), sha256sumsLine(tgz));
   console.log(`wrote ${packJson.filename} and SHA256SUMS`);
+
+  const probe = path.join(__dirname, 'prebuild-probe.js');
+  for (const cell of installCells({ tgz, npmExecPath: npm, env: process.env })) {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), `wait-on-${cell.name}-`));
+    fs.writeFileSync(path.join(project, 'package.json'), '{"name":"probe","private":true}\n');
+    const installed = childProcess.spawnSync(cell.cmd, cell.args, { cwd: project, env: cell.env, stdio: 'inherit' });
+    if (installed.status !== 0) fail(`${cell.name}: install failed`);
+    const env = { ...cell.env, WAIT_ON_ENGINE: 'rust-strict' };
+    const run = childProcess.spawnSync(process.execPath, [probe], { cwd: project, env, encoding: 'utf8' });
+    if (run.status !== 0) fail(`${cell.name}: probe exited ${run.status}\n${run.stdout}${run.stderr}`);
+    const { realpath } = JSON.parse(run.stdout.trim());
+    assertInstalledAddon({ realpath, projectRoot: project, dir: hostDir() });
+    console.log(`${cell.name}: loaded ${realpath}`);
+    fs.rmSync(project, { recursive: true, force: true });
+  }
 }
 
 if (require.main === module) main();
@@ -121,5 +165,8 @@ module.exports = {
   checkManifest,
   sizeReport,
   sha256sumsLine,
-  parseArgs
+  installCells,
+  assertInstalledAddon,
+  parseArgs,
+  PNPM_VERSION
 };

@@ -218,4 +218,82 @@ describe('ci:rs:package', function () {
     expect(ciRsPackage.parseArgs(['--host-only'])).to.deep.equal({ hostOnly: true });
     expect(ciRsPackage.parseArgs([])).to.deep.equal({ hostOnly: false });
   });
+
+  it('should plan npm, npm omit-optional and pnpm cells with scripts disabled and no shell', function () {
+    const env = { PATH: 'p', WAIT_ON_NATIVE_LIBRARY_PATH: '/elsewhere/wait-on.node' };
+    const cells = ciRsPackage.installCells({ tgz: '/t/wait-on.tgz', npmExecPath: '/npm-cli.js', env });
+    expect(cells.map((c) => c.name)).to.deep.equal(['npm', 'npm-omit-optional', 'pnpm']);
+    for (const cell of cells) {
+      expect(cell.cmd).to.equal(process.execPath);
+      expect(cell.args[0]).to.equal('/npm-cli.js');
+      expect(cell.args).to.include('--ignore-scripts');
+      expect(cell.args).to.include('/t/wait-on.tgz');
+      expect(cell.env).to.not.have.property('WAIT_ON_NATIVE_LIBRARY_PATH');
+      expect(cell.env.PATH).to.equal('p');
+    }
+    expect(cells[0].args).to.not.include('--omit=optional');
+    expect(cells[1].args).to.include('--omit=optional');
+    expect(cells[2].args).to.include.members(['exec', '--package', `pnpm@${ciRsPackage.PNPM_VERSION}`, 'pnpm', 'add']);
+    expect(env).to.have.property('WAIT_ON_NATIVE_LIBRARY_PATH'); // caller's env untouched
+  });
+
+  it('should accept an addon realpath inside the project and reject one outside', function () {
+    const project = fs.realpathSync(tmp());
+    const inside = path.join(project, 'node_modules', 'wait-on', 'prebuilds', hostDir, 'wait-on.node');
+    expect(() => ciRsPackage.assertInstalledAddon({ realpath: inside, projectRoot: project, dir: hostDir })).to.not.throw();
+    const repoAddon = path.join(__dirname, '..', 'prebuilds', hostDir, 'wait-on.node');
+    expect(() => ciRsPackage.assertInstalledAddon({ realpath: repoAddon, projectRoot: project, dir: hostDir })).to.throw(
+      repoAddon
+    );
+    const wrongDir = path.join(project, 'node_modules', 'wait-on', 'prebuilds', 'other', 'wait-on.node');
+    expect(() => ciRsPackage.assertInstalledAddon({ realpath: wrongDir, projectRoot: project, dir: hostDir })).to.throw(
+      hostDir
+    );
+  });
+
+  describe('prebuild-probe', function () {
+    const REPO = path.join(__dirname, '..');
+    const PROBE = path.join(REPO, 'scripts', 'prebuild-probe.js');
+    const CHECKS_ADDON = path.join(__dirname, 'fixtures', 'fake-addon-checks.js');
+
+    // A project whose node_modules/wait-on links to this checkout, like an installed copy.
+    function linkedProject() {
+      const project = tmp();
+      fs.mkdirSync(path.join(project, 'node_modules'));
+      fs.symlinkSync(REPO, path.join(project, 'node_modules', 'wait-on'), 'junction');
+      return project;
+    }
+
+    function probe(vars, args = []) {
+      const env = { ...process.env, WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: CHECKS_ADDON, ...vars };
+      const r = childProcess.spawnSync(process.execPath, [PROBE, ...args], { cwd: linkedProject(), env, encoding: 'utf8' });
+      return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+    }
+
+    it('should print the loaded addon path and pass API and CLI checks against the fixture addon', function () {
+      const { code, stdout, stderr } = probe({ WAIT_ON_FAKE_ADDON_ANSWER: 'ready' });
+      expect(code, stderr).to.equal(0);
+      const line = JSON.parse(stdout.trim());
+      expect(line.addonPath).to.equal(CHECKS_ADDON);
+      expect(line.realpath).to.equal(fs.realpathSync(CHECKS_ADDON));
+      expect(fs.realpathSync(line.pkgDir)).to.equal(fs.realpathSync(REPO));
+      expect(line.api).to.equal(true);
+      expect(line.cli).to.equal(0);
+    });
+
+    it('should exit non-zero with the timeout message when nothing listens', function () {
+      const { code, stdout, stderr } = probe({ WAIT_ON_FAKE_ADDON_ANSWER: 'refused' }, ['--no-listener', '--timeout', '300']);
+      expect(code).to.not.equal(0);
+      expect(stderr).to.include('Timed out waiting for');
+      const line = JSON.parse(stdout.trim());
+      expect(line.api).to.include('Timed out waiting for');
+      expect(line.cli).to.not.equal(0);
+    });
+
+    it('should fail under rust-strict when the addon cannot load', function () {
+      const { code, stderr } = probe({ WAIT_ON_NATIVE_LIBRARY_PATH: path.join(tmp(), 'missing.node') });
+      expect(code).to.not.equal(0);
+      expect(stderr).to.include('WAIT_ON_ENGINE=rust-strict');
+    });
+  });
 });
