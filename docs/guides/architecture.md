@@ -26,11 +26,16 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
 
-The addon exposes `version()` (the crate version) and `noop()`. No resource check runs in Rust yet: under a loaded Rust engine every resource still uses the JS checks.
+The addon exposes `version()` (the crate version), `noop()`, and two async checks that return Promises: `tcpCheck(host, port, timeoutMs)` and `socketCheck(path)`, each resolving to `{ ready, timedOut, reason }` (`reason` is `null` when ready). They run on napi's tokio runtime (napi feature `async`), not the libuv threadpool, so a pending connect never blocks Node's fs/dns work.
 
 ## Resource checks in Rust
 
 Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7).
+
+- **In Rust today:** `tcp:` and `socket:` (`crates/wait-on-core/src/{tcp,socket}.rs`). `createTCP$` / `createSocket$` call the addon export when the loaded addon has it, else the JS check (per export, under `rust` and `rust-strict`). JS still parses `host:port`, applies `negateAsync` for reverse and prints the verbose lines.
+- **tcp:** resolves the host and races one connect per address (Windows reports a refused loopback connect only after ~2 s, so sequential tries would starve the IPv4 fallback); `tcpTimeout` bounds the whole attempt, `0` means no timeout.
+- **socket:** unix domain socket connect; on Windows the path is a named pipe opened as a client.
+- **Deliberate difference:** under `--verbose` the not-ready reason is Rust's error text (e.g. `Connection refused (os error 61)`), not Node's `ECONNREFUSED`.
 
 Status: planned (lane L7)
 
