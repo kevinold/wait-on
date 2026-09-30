@@ -27,5 +27,6 @@ coverage
 .compound-engineering/config.local.yaml
 .pi/npm/
 
-# Rust build output
+# Rust build output and built addons
 target/
+prebuilds/
