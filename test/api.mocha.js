@@ -8,6 +8,7 @@ const path = require('path');
 const temp = require('temp');
 const mkdirp = require('mkdirp');
 const { itFrozen } = require('./frozen-clock');
+const { listening } = require('./helpers/cli-conformance');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -227,6 +228,34 @@ describe('api', function () {
     waitOn(opts, function (err) {
       expect(err).to.not.be.ok;
       done();
+    });
+  });
+
+  // Engine parity cells (#54): run under JS in npm test and against the Rust addon in ci:rs.
+  async function listenOn(host) {
+    httpServer = await listening(http.createServer(), 0, host);
+    return httpServer.address().port;
+  }
+
+  it('should succeed when a service is listening on a bare tcp port', async function () {
+    const port = await listenOn('localhost');
+    await waitOn({ resources: [`tcp:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed for localhost against an IPv4-only listener', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:localhost:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed with tcpTimeout 0 against a listening port', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:127.0.0.1:${port}`], tcpTimeout: 0, timeout: 2000 });
+  });
+
+  it('should succeed in reverse mode when nothing listens on the socket path', function (done) {
+    temp.mkdir({}, function (err, dirPath) {
+      if (err) return done(err);
+      waitOn({ resources: ['socket:' + socketPathIn(dirPath)], reverse: true, timeout: 2000 }, done);
     });
   });
 

@@ -26,11 +26,18 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy.
 
-The addon exposes `version()` (the crate version), `noop()`, and the resource checks listed below. Resources whose check has not moved yet still use the JS checks under a loaded Rust engine.
+The addon exposes `version()` (the crate version), `noop()`, and the resource checks ported so far (below). Resources whose check is not ported yet keep using the JS checks under a loaded Rust engine.
 
 ## Resource checks in Rust
 
-Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7).
+Checks move to Rust one at a time behind the existing rxjs pipeline: `tcp:`/`socket:` (L2), `file:` (L3), `http(s)` (L4), TLS/proxy/unix (L5), `command:` (L6); then the polling loop itself (L7). `waitOnImpl` passes the loaded addon (`null` under `js` or a `rust` fallback) into the resource factories, and each ported factory asks the addon instead of its JS check when one is present.
+
+- **`file:` (L3):** `wait_on_core::file_size` stats the path (following symlinks) and returns its size, or `-1` on any error, the same contract as JS `getFileSize` (a missing file, `EPERM`, and Windows delete-pending errors all read as `-1`). The addon exports it as `fileSize(path): Promise<number>`, an napi `AsyncTask` on the libuv threadpool, so a slow stat never blocks the event loop. `createFileResource$` calls it in place of `getFileSize`; the `window` stabilization `scan`, the reverse check, and the verbose lines stay in JS and are unchanged. Known difference: paths cross into Rust as UTF-8, so a Windows path containing an unpaired UTF-16 surrogate (which `fs.stat` accepts) reads as `-1` under Rust.
+
+- **`tcp:` / `socket:` (L2):** `crates/wait-on-core/src/{tcp,socket}.rs`, exported as async `tcpCheck(host, port, timeoutMs)` and `socketCheck(path)`, each resolving to `{ ready, timedOut, reason }` (`reason` is `null` when ready). They run on napi's tokio runtime (napi feature `async`), not the libuv threadpool, so a pending connect never blocks Node's fs/dns work. `createTCP$` / `createSocket$` call the export when the loaded addon has it, else the JS check (per export, under `rust` and `rust-strict`). JS still parses `host:port`, applies `negateAsync` for reverse and prints the verbose lines.
+- **tcp:** resolves the host and races one connect per address (Windows reports a refused loopback connect only after ~2 s, so sequential tries would starve the IPv4 fallback); `tcpTimeout` bounds the whole attempt, `0` means no timeout.
+- **socket:** unix domain socket connect; on Windows the path is a named pipe opened as a client.
+- **Deliberate difference:** under `--verbose` the not-ready reason is Rust's error text (e.g. `Connection refused (os error 61)`), not Node's `ECONNREFUSED`.
 
 Status: planned (lane L7)
 
@@ -60,7 +67,7 @@ Deliberate JS vs Rust differences on the Rust path:
 
 - Default request headers: undici sends `user-agent: undici`, `accept-language`, `sec-fetch-mode`; reqwest sends `accept: */*` only.
 - Redirect hop limit: 20 on both (reqwest `Policy::limited(20)`, undici fetch's limit).
-- TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout`.
+- TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout` (under `reverse` it reads as gone on the first poll).
 - `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.
 
 **Per-check overhead** (`node benchmarks/http-ffi.js --iterations 200`; darwin arm64, Node v26.3.1). Per-call rows time a full `waitOn` against a ready local server (one new checker and connection each); `steady` rows time the gap between polls on one resource (connection reuse); `ffi noop` is the bare boundary (`addon.noop()`, mean of 1000 calls).
