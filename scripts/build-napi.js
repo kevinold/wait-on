@@ -78,4 +78,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { planBuild, hostTriple, parseArgs };
+module.exports = { TARGETS, planBuild, hostTriple, parseArgs };

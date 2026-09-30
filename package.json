@@ -32,7 +32,8 @@
     "test": "npm run lint && npm run test:types && npm run test:mocha",
     "test:coverage": "nyc npm run test:mocha",
     "test:mocha": "mocha --exit \"test/**/*.mocha.js\"",
-    "test:types": "tsc -p test/tsconfig.json"
+    "test:types": "tsc -p test/tsconfig.json",
+    "ci:rs:package": "node scripts/ci-rs-package.js"
   },
   "engines": {
     "node": ">=22.19.0"
