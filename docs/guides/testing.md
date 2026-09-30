@@ -14,8 +14,8 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/cli.mocha.js` | `bin/wait-on` as a subprocess |
 | `test/cli-conformance.mocha.js` | black-box CLI vectors: file, tcp, socket, args, config-file precedence |
 | `test/cli-conformance-http.mocha.js` | black-box CLI vectors: http(s), http(s)-get, http-over-unix |
-| `test/cli-conformance-helper.mocha.js` | self-check for the spawn harness `test/helpers/cli-conformance.js` |
-| `test/parser-properties.mocha.js` | property tests for the four pure parsers (seeded PRNG, override with `WAITON_TEST_SEED`) |
+| `test/cli-conformance-helper.mocha.js` | self-check for the spawn harness `test/helpers/cli-conformance.js`, including the `expectElapsed` tolerance bounds |
+| `test/parser-properties.mocha.js` | property tests for the four pure parsers (seeded PRNG, override with `WAITON_TEST_SEED`), and the Rust-vs-JS differential over the same vectors (real addon) |
 | `test/validation.mocha.js` | schema and resource syntax |
 | `test/https-proxy.mocha.js` | TLS client options, proxy, unix socket + proxy |
 | `test/coverage.mocha.js` | branches the main suites miss (validation errors, dispatcher options, verbose, CLI help) |
@@ -23,7 +23,7 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/engine.mocha.js` | `WAIT_ON_ENGINE` selection, fallback and errors (API and CLI), prebuild path resolution, `file:` probe routing and `command:` check routing (stub addon), the real addon's `fileSize` and `runCommand`, and that slow commands never starve a `file:` probe |
 | `test/engine-checks.mocha.js` | tcp/socket dispatch to the addon: fixture addon (always runs) and real addon (skips without a host prebuild) |
 | `test/rust-pending.mocha.js` | the Rust pending list hooks (fixture specs in a mocha subprocess) |
-| `test/scripts.mocha.js` | planning functions behind `build:napi` and `ci:rs` |
+| `test/scripts.mocha.js` | planning functions behind `build:napi` and `ci:rs`, and the `bench:startup` median/verdict/record functions and its fail-loud path |
 | `test/rust-scaffold.mocha.js` | toolchain pin equals the workspace MSRV; `Cargo.lock` committed |
 | `crates/wait-on-core` `#[test]`s | Rust unit tests (`cargo test --workspace`); `run_command` cases use per-OS shell builtins (`#[cfg(unix)]`/`#[cfg(windows)]`) so no `node` is needed |
 | `test/types.test-d.ts` | `index.d.ts` type tests (`npm run test:types`) |
@@ -33,6 +33,30 @@ Shared fixtures: `test/config-http-resources.js`, `test/config-headers.js`, `tes
 ## Conformance and property tests
 
 The CLI conformance suites are language-agnostic spawn tests and `parser-properties` is shaped as the Node oracle; both are the contract the Rust engine must match.
+
+### Timing tolerance
+
+Every elapsed-time assertion in `test/cli-conformance.mocha.js` and `test/cli-conformance-http.mocha.js` goes through `expectElapsed(result, expectedMs)` from `test/helpers/cli-conformance.js`, which checks `[expectedMs - early, expectedMs + late]` with `TOLERANCE_MS = { early: 100, late: 1000 }`. Vectors where a resource appears later expect `APPEAR` (250 ms); timeout vectors expect `T` (800 ms). No other numeric bound on `elapsedMs` exists in those suites.
+
+- `early` covers timer clamping only: `elapsedMs` starts before the child's own timers, so a child cannot legitimately finish before `expectedMs`.
+- `late` covers node startup plus module load (and addon load under `rust-strict`) on the slowest CI row. It is additive, not a percentage, because the noise is startup, not proportional to the wait. `T + late = 1800` stays under mocha's 2000 ms default; raising `late` means raising a per-suite `this.timeout` in both suites together, and updating this section.
+- The same numbers apply to both engines (`npm test` and `npm run ci:rs`). This tolerance is the R5/R17 timing-parity promote criterion: a Rust build that cannot meet it on every CI OS is not promotable.
+
+### Parser differential
+
+The last `describe` in `test/parser-properties.mocha.js` feeds every golden, reject and generated input (plus a junk generator with line terminators and a hand-picked list of JS regex edge cases) through the four addon parsers (`parsePrefix`, `parseHostPort`, `parseInterval`, `parseHttpUnix`) and the Node oracle, and asserts deep-strict-equal results.
+
+- It skips when no host prebuild exists and `WAIT_ON_ENGINE` is not `rust-strict`, so `npm test` without a Rust toolchain stays green. Under `rust-strict` (`ci:rs`) it never skips: a missing or stale addon fails the run (a test spawns mocha with a missing addon path to pin this).
+- A failure names the seed, run index and input. Reproduce with `WAITON_TEST_SEED=<seed> npx mocha --exit test/parser-properties.mocha.js`; `WAITON_TEST_RUNS=<n>` raises the run count (default 300).
+- On a mismatch the Rust side changes; the JS parsers are the oracle.
+
+## Startup benchmark
+
+`npm run bench:startup` (`scripts/bench-startup.js`, needs a host prebuild) starts a local TCP listener and spawns `node bin/wait-on tcp:127.0.0.1:<port>` under `WAIT_ON_ENGINE=js` and `rust-strict`, one untimed warm-up each, then `runs` timed spawns per engine, interleaved. It fails when `median(rust) - median(js)` exceeds `max(relative * median(js), floorMs)`, or when the Rust engine cannot load. A tcp resource is used because it has no stability window, so the numbers are startup plus one check.
+
+- Threshold and run count live in [`benchmarks/startup-baseline.json`](../../benchmarks/startup-baseline.json) (`relative: 0.25`, `floorMs: 50`, `runs: 20`). The gate compares the two engines in the same run, so it does not depend on the runner's speed.
+- `recorded` in that file holds reference medians per `<platform>-<arch>`; they are the record, not the gate. Refresh this host's entry with `npm run bench:startup -- --record` and commit it. `--runs N` overrides the run count.
+- `npm run ci:rs` runs it as its last step, after mocha, on ubuntu, macos and windows.
 
 ## Coverage gate
 
