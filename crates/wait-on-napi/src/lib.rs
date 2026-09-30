@@ -97,7 +97,7 @@ pub async fn socket_check(path: String) -> CheckResult {
     wait_on_core::socket::ready(&path).await.into()
 }
 
-// Parsers (L8), exposed only for the differential in test/parser-properties.mocha.js;
+// Parsers, exposed only for the differential in test/parser-properties.mocha.js;
 // each shape deep-equals its `nodeParsers` counterpart.
 
 #[napi(object)]

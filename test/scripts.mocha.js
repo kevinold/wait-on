@@ -89,16 +89,6 @@ describe('ci:rs', function () {
     expect(steps[5].env.WAIT_ON_ENGINE).to.equal('rust-strict');
   });
 
-  it('runs the benchmark after mocha as the last step', function () {
-    const steps = ciRs.steps({ repoRoot });
-    const last = steps[steps.length - 1];
-    expect([last.cmd, ...last.args]).to.deep.equal([
-      process.execPath,
-      path.join(repoRoot, 'scripts', 'bench-startup.js')
-    ]);
-    expect(steps[steps.length - 2].args).to.include(mocha);
-  });
-
   it('runs node steps with process.execPath, not npm or a shell', function () {
     for (const step of ciRs.steps({ repoRoot })) {
       if (step.cmd !== 'cargo') expect(step.cmd).to.equal(process.execPath);

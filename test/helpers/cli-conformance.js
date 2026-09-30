@@ -100,7 +100,7 @@ const W = 100; // -w stability window (ms)
 const APPEAR = 250; // delay before a "later" resource is made available (ms)
 const FAST_OPTS = ['-t', String(T), '-i', String(I), '-w', String(W)];
 
-// The one timing tolerance for every conformance vector, both engines (R-L8-5/6).
+// The one timing tolerance for every conformance vector, both engines.
 // early: timer clamping only - elapsedMs starts before the child's own timers,
 // so a child never legitimately finishes before expectedMs. late: node startup +
 // module load (+ addon load under WAIT_ON_ENGINE=rust) on the slowest CI row.
