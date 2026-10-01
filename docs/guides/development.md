@@ -12,6 +12,7 @@ git clone https://github.com/kevinold/wait-on.git
 cd wait-on
 git checkout spike-next-rs
 npm ci
+cargo xtask hooks   # once per clone: commit messages checked locally (AGENTS.md › Commit messages)
 npm test
 ```
 
@@ -34,7 +35,7 @@ Hook inputs and outputs: [ci.md](ci.md#npm-script-hook-contract).
 
 ## xtask
 
-The Rust-side tooling is `cargo xtask` (crate `xtask/`, alias in `.cargo/config.toml`); the npm scripts above call it. `cargo xtask --help` lists the eight subcommands: `ci`, `fmt`, `lint`, `test`, `cov` (`cargo llvm-cov --workspace`, needs `cargo-llvm-cov`), `build-napi`, `package`, `bench-startup`. Run `package` through `npm run ci:rs:package`. Its tests: `cargo test -p xtask` (needs `node` on `PATH`; the `npm pack` test skips unless run through npm). `xtask/assets/prebuild-probe.js` stays JS because it runs under Node inside installed packages and containers. The cargo calls xtask makes itself (`ci`, `fmt`, `lint`, `test`, `cov`) build into `target/xtask-inner/` (or `$CARGO_TARGET_DIR/xtask-inner`), so they never relink the running `xtask` binary, which Windows locks.
+The Rust-side tooling is `cargo xtask` (crate `xtask/`, alias in `.cargo/config.toml`); the npm scripts above call it. `cargo xtask --help` lists the nine subcommands: `ci`, `fmt`, `lint`, `test`, `cov` (`cargo llvm-cov --workspace`, needs `cargo-llvm-cov`), `build-napi`, `package`, `bench-startup`, `hooks` (sets `core.hooksPath` to `.githooks` so `.githooks/commit-msg` checks commit messages). Run `package` through `npm run ci:rs:package`. Its tests: `cargo test -p xtask` (needs `node` on `PATH`; the `npm pack` test skips unless run through npm). `xtask/assets/prebuild-probe.js` stays JS because it runs under Node inside installed packages and containers. The cargo calls xtask makes itself (`ci`, `fmt`, `lint`, `test`, `cov`) build into `target/xtask-inner/` (or `$CARGO_TARGET_DIR/xtask-inner`), so they never relink the running `xtask` binary, which Windows locks.
 
 ## Vetting a new or bumped crate
 

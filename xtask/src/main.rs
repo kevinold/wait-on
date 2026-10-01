@@ -3,6 +3,7 @@
 mod bench;
 mod build_napi;
 mod ci;
+mod hooks;
 mod host;
 mod package;
 
@@ -43,6 +44,11 @@ const COMMANDS: &[(&str, &str, Run)] = &[
         "bench-startup",
         "startup overhead of the rust engine vs js [--runs N] [--record]",
         bench::run,
+    ),
+    (
+        "hooks",
+        "enable the tracked git hooks (.githooks/commit-msg) in this repo",
+        hooks::run,
     ),
 ];
 

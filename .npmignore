@@ -12,3 +12,4 @@ eslint.config.mjs
 commitlint.config.js
 docs
 .multi-worker-pm.json
+.githooks

@@ -7,7 +7,7 @@ fn xtask(args: &[&str]) -> Output {
         .expect("spawn xtask")
 }
 
-const SUBCOMMANDS: [&str; 8] = [
+const SUBCOMMANDS: [&str; 9] = [
     "ci",
     "fmt",
     "lint",
@@ -16,6 +16,7 @@ const SUBCOMMANDS: [&str; 8] = [
     "build-napi",
     "package",
     "bench-startup",
+    "hooks",
 ];
 
 fn assert_lists_every_subcommand(text: &str) {
@@ -95,4 +96,27 @@ fn bench_startup_names_the_addon_when_the_rust_engine_cannot_load() {
         String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
     assert!(text.contains("rust-strict"), "{text}");
     assert!(text.contains(&*missing.to_string_lossy()), "{text}");
+}
+
+#[test]
+fn hooks_points_core_hookspath_at_githooks_in_the_current_repo() {
+    let repo = std::env::temp_dir().join(format!("wait-on-hooks-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(&repo).expect("create temp repo dir");
+    let git = |args: &[&str]| Command::new("git").args(args).current_dir(&repo).output();
+    if Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipping: git is not available");
+        return;
+    }
+    let init = git(&["init", "-q"]).expect("spawn git init");
+    assert!(init.status.success(), "git init failed: {init:?}");
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("hooks")
+        .current_dir(&repo)
+        .output()
+        .expect("spawn xtask");
+    let set = git(&["config", "--get", "core.hooksPath"]).expect("read config");
+    let _ = std::fs::remove_dir_all(&repo);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&set.stdout).trim(), ".githooks");
 }
