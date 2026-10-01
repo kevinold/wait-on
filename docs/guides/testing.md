@@ -24,7 +24,8 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/engine-checks.mocha.js` | tcp/socket dispatch to the addon: fixture addon (always runs) and real addon (skips without a host prebuild) |
 | `test/benchmarks.mocha.js` | `benchmarks/http-ffi.js` helpers and smoke runs |
 | `test/rust-pending.mocha.js` | the Rust pending list hooks (fixture specs in a mocha subprocess) |
-| `test/scripts.mocha.js` | planning functions behind `build:napi` and `ci:rs`, and the `bench:startup` median/verdict/record functions and its fail-loud path |
+| `xtask` `#[test]`s | `cargo test -p xtask`: unit tests in `xtask/src/*.rs` (`ci` step order, `build-napi` planning, `package` guards, `bench-startup` median/verdict/record) and binary tests in `xtask/tests/cli.rs` (`--help`, dispatch, fail-loud paths); needs `node` on `PATH`, the `npm pack` test skips unless run through npm |
+| `test/prebuild-probe.mocha.js` | `xtask/assets/prebuild-probe.js`, the probe `ci:rs:package` runs inside installed packages |
 | `test/rust-scaffold.mocha.js` | toolchain pin equals the workspace MSRV; `Cargo.lock` committed |
 | `crates/wait-on-core` `#[test]`s | Rust unit tests (`cargo test --workspace`); `run_command` cases use per-OS shell builtins (`#[cfg(unix)]`/`#[cfg(windows)]`) so no `node` is needed |
 | `test/types.test-d.ts` | `index.d.ts` type tests (`npm run test:types`) |
@@ -53,7 +54,7 @@ The last `describe` in `test/parser-properties.mocha.js` feeds every golden, rej
 
 ## Startup benchmark
 
-`npm run bench:startup` (`scripts/bench-startup.js`, needs a host prebuild) starts a local TCP listener and spawns `node bin/wait-on tcp:127.0.0.1:<port>` under `WAIT_ON_ENGINE=js` and `rust-strict`, one untimed warm-up each, then `runs` timed spawns per engine, interleaved. It fails when `median(rust) - median(js)` exceeds `max(relative * median(js), floorMs)`, or when the Rust engine cannot load. A tcp resource is used because it has no stability window, so the numbers are startup plus one check.
+`npm run bench:startup` (`cargo xtask bench-startup`, needs a host prebuild) starts a local TCP listener and spawns `node bin/wait-on tcp:127.0.0.1:<port>` under `WAIT_ON_ENGINE=js` and `rust-strict`, one untimed warm-up each, then `runs` timed spawns per engine, interleaved. It fails when `median(rust) - median(js)` exceeds `max(relative * median(js), floorMs)`, or when the Rust engine cannot load. A tcp resource is used because it has no stability window, so the numbers are startup plus one check.
 
 - Threshold and run count live in [`benchmarks/startup-baseline.json`](../../benchmarks/startup-baseline.json) (`relative: 0.25`, `floorMs: 50`, `runs: 20`). The gate compares the two engines in the same run, so it does not depend on the runner's speed.
 - `recorded` in that file holds reference medians per `<platform>-<arch>`; they are the record, not the gate. Refresh this host's entry with `npm run bench:startup -- --record` and commit it. `--runs N` overrides the run count.
