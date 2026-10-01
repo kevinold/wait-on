@@ -20,6 +20,8 @@ const counting = require('./fixtures/counting-addon');
 const { routesHttpToRust } = waitOn._internal;
 
 const { withEnv, runCLI: runCLIWith } = require('./helpers/engine-env');
+const tlsFixture = require('./helpers/tls-fixture');
+const stubProxy = require('./helpers/stub-proxy');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
@@ -294,35 +296,69 @@ describe('engine selection', function () {
       expect((await c.check()).ok).to.equal(true);
       expect(sockets.size).to.equal(1);
     });
+
+    it('should send the request through the proxy when proxy is set', async function () {
+      const { url } = await okServer();
+      const proxy = await stubProxy.start();
+      closers.push(() => proxy.close());
+      expect((await checker(url, { proxy: proxy.url }).check()).ok).to.equal(true);
+      expect(proxy.requests.map((r) => r.line)).to.deep.equal([`HEAD ${url}`]);
+    });
+
+    it('should construct and settle not ok with an error when roots do not parse', async function () {
+      const fx = tlsFixture();
+      if (!fx) this.skip();
+      closers.push(fx.cleanup);
+      const server = https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end());
+      const { url } = await listen(server);
+      const httpsUrl = url.replace('http:', 'https:');
+      expect((await checker(httpsUrl).check()).ok).to.equal(true); // reachable without roots
+      const bad = '-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n';
+      const r = await checker(httpsUrl, { roots: [bad] }).check();
+      expect(r.ok).to.equal(false);
+      expect(r.error).to.be.a('string');
+    });
+
+    it('should connect over the unix socket (named pipe on Windows) when socketPath is set', async function () {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-addon-sock-'));
+      closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+      const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
+      const seen = [];
+      const server = http.createServer((req, res) => {
+        seen.push(req.url);
+        res.end();
+      });
+      closers.push(() => server.close());
+      await new Promise((resolve) => server.listen(sock, resolve));
+      expect((await checker('http://localhost/', { socketPath: sock }).check()).ok).to.equal(true);
+      expect(seen).to.deep.equal(['/']);
+    });
   });
 
   describe('http routing (counting addon)', function () {
-    const NO_PROXY_ENV = { HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined };
+    const NO_PROXY_ENV = {
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined
+    };
     const RUST = { WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: COUNTING_ADDON, ...NO_PROXY_ENV };
     const FAST = { timeout: 2000, interval: 100 };
     const closers = [];
-    let certDir;
+    let fx;
     let cert;
     let key;
 
     before(function () {
       this.timeout(30000);
-      try {
-        childProcess.execSync('openssl version', { stdio: 'ignore' });
-      } catch {
-        return; // https cells skip below
-      }
-      certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-route-'));
-      childProcess.execSync(
-        `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -keyout ${certDir}/key.pem -out ${certDir}/cert.pem -days 1 -nodes -subj "/CN=localhost"`,
-        { stdio: 'ignore' }
-      );
-      key = fs.readFileSync(path.join(certDir, 'key.pem'));
-      cert = fs.readFileSync(path.join(certDir, 'cert.pem'));
+      fx = tlsFixture();
+      if (fx) ({ key, cert } = fx); // else https cells skip below
     });
 
     after(function () {
-      if (certDir) fs.rmSync(certDir, { recursive: true, force: true });
+      if (fx) fx.cleanup();
     });
 
     beforeEach(function () {
@@ -411,47 +447,107 @@ describe('engine selection', function () {
       expect(err.message).to.equal('client build failed');
     });
 
-    describe('L5 cells stay on the JS check', function () {
-      it('should resolve without constructing a checker when the resource is http://unix:', async function () {
-        if (process.platform === 'win32') this.skip();
+    describe('L5 cells route to the addon', function () {
+      const dead = 'http://127.0.0.1:1';
+      // both spellings: Windows env names are case-insensitive
+      const DEAD_ENV = { HTTP_PROXY: dead, http_proxy: dead };
+      const constructOpts = () => {
+        expect(constructs()).to.have.length(1);
+        return constructs()[0].opts;
+      };
+
+      it('should pass socketPath, a localhost url and no proxy when the resource is http://unix: and HTTP_PROXY is set', async function () {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-route-sock-'));
         closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-        const sock = path.join(dir, 'sock');
+        const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
         await listen(http.createServer(handler), sock);
-        expect(await outcome(RUST, { resources: [`http://unix:${sock}:/`] })).to.equal('resolved');
-        expect(counting.calls).to.have.length(0);
+        expect(await outcome({ ...RUST, ...DEAD_ENV }, { resources: [`http://unix:${sock}:/`] })).to.equal('resolved');
+        const opts = constructOpts();
+        expect(opts).to.include({ socketPath: sock, url: 'http://localhost/' });
+        expect(opts).to.not.have.property('proxy');
       });
 
-      it('should resolve without constructing a checker when ca is set', async function () {
+      it('should pass roots, cert and key on an http target when ca, strictSSL, cert and key are set', async function () {
+        if (!cert) this.skip();
         const port = await httpPort();
-        const opts = { resources: [`http://localhost:${port}/`], ca: 'unused-for-http' };
+        const opts = { resources: [`http://localhost:${port}/`], ca: 'unused-for-http', strictSSL: true, cert, key };
         expect(await outcome(RUST, opts)).to.equal('resolved');
-        expect(counting.calls).to.have.length(0);
+        expect(constructOpts()).to.deep.include({ roots: ['unused-for-http'], cert: cert.toString() });
+        expect(constructOpts().key).to.match(/^-----BEGIN PRIVATE KEY-----/);
       });
 
-      it('should reject a self-signed cert like JS without constructing a checker when strictSSL is true', async function () {
+      it('should pass a decrypted PKCS#8 key when an encrypted key and its passphrase are set', async function () {
+        if (!cert) this.skip();
+        const port = await httpPort();
+        const opts = { resources: [`http://localhost:${port}/`], cert, key: fx.encryptedKey, passphrase: fx.passphrase };
+        await outcome(RUST, opts);
+        expect(constructOpts().key).to.match(/^-----BEGIN PRIVATE KEY-----/);
+      });
+
+      it('should pass the key unchanged when the passphrase is wrong', async function () {
+        if (!cert) this.skip();
+        const port = await httpPort();
+        const opts = { resources: [`http://localhost:${port}/`], cert, key: fx.encryptedKey, passphrase: 'wrong' };
+        await outcome(RUST, opts);
+        expect(constructOpts().key).to.equal(fx.encryptedKey.toString());
+      });
+
+      it('should pass the default roots when strictSSL is true without ca', async function () {
         if (!cert) this.skip();
         const port = await httpsPort();
-        const opts = { resources: [`https://localhost:${port}/`], strictSSL: true, timeout: 600 };
-        const js = await outcome({ WAIT_ON_ENGINE: 'js', ...NO_PROXY_ENV }, opts);
-        expect(js).to.match(/Timed out/);
-        expect(await outcome(RUST, opts)).to.equal(js);
-        expect(counting.calls).to.have.length(0);
+        await outcome(RUST, { resources: [`https://localhost:${port}/`], strictSSL: true, timeout: 600 });
+        expect(constructOpts().roots).to.have.length.above(1);
       });
 
-      it('should resolve without constructing a checker when proxy is false', async function () {
-        const port = await httpPort();
-        expect(await outcome(RUST, { resources: [`http://localhost:${port}/`], proxy: false })).to.equal('resolved');
-        expect(counting.calls).to.have.length(0);
+      it('should pass only the ca as roots when strictSSL is true with ca', async function () {
+        if (!cert) this.skip();
+        const port = await httpsPort();
+        await outcome(RUST, { resources: [`https://localhost:${port}/`], strictSSL: true, ca: cert, timeout: 600 });
+        expect(constructOpts().roots).to.deep.equal([cert.toString()]);
       });
 
-      it('should time out through a dead env proxy without constructing a checker when HTTP_PROXY is set', async function () {
+      it('should pass no proxy when proxy is false and HTTP_PROXY is set', async function () {
         const port = await httpPort();
-        // both spellings: Windows env names are case-insensitive, so clearing http_proxy
-        // after setting HTTP_PROXY would unset the dead proxy there
-        const dead = 'http://127.0.0.1:1';
-        const vars = { ...RUST, HTTP_PROXY: dead, http_proxy: dead, NO_PROXY: undefined, no_proxy: undefined };
-        expect(await outcome(vars, { resources: [`http://localhost:${port}/`], timeout: 600 })).to.match(/Timed out/);
+        expect(await outcome({ ...RUST, ...DEAD_ENV }, { resources: [`http://localhost:${port}/`], proxy: false })).to.equal('resolved');
+        expect(constructOpts()).to.not.have.property('proxy');
+      });
+
+      it('should pass the env proxy when HTTP_PROXY is set', async function () {
+        const port = await httpPort();
+        await outcome({ ...RUST, ...DEAD_ENV }, { resources: [`http://localhost:${port}/`], timeout: 600 });
+        expect(constructOpts().proxy).to.equal(dead);
+      });
+
+      it('should pass the normalized proxy URI with percent-encoded credentials when a proxy object has auth', async function () {
+        const port = await httpPort();
+        const proxy = { host: '::1', port: 1, auth: { username: 'u', password: 'p@:/' } };
+        await outcome(RUST, { resources: [`http://localhost:${port}/`], proxy, timeout: 600 });
+        expect(constructOpts().proxy).to.equal('http://u:p%40%3A%2F@[::1]:1');
+      });
+    });
+
+    describe('KTD10 carve-outs stay on the JS check', function () {
+      const cells = [
+        ['an https target selects HTTPS_PROXY', 'https', { HTTPS_PROXY: 'http://127.0.0.1:1', https_proxy: 'http://127.0.0.1:1' }, {}],
+        ['an https target falls back to HTTP_PROXY', 'https', { HTTP_PROXY: 'http://127.0.0.1:1', http_proxy: 'http://127.0.0.1:1' }, {}],
+        ['the proxy object protocol is https', 'http', {}, { proxy: { host: '127.0.0.1', port: 1, protocol: 'https' } }],
+        ['the proxy object protocol is socks5', 'http', {}, { proxy: { host: '127.0.0.1', port: 1, protocol: 'socks5' } }],
+        ['HTTPS_PROXY is an https URL', 'http', { HTTPS_PROXY: 'https://127.0.0.1:1', https_proxy: 'https://127.0.0.1:1' }, {}]
+      ];
+      for (const [label, scheme, env, extra] of cells) {
+        it(`should construct no checker when ${label}`, async function () {
+          const port = scheme === 'https' ? (cert ? await httpsPort() : this.skip()) : await httpPort();
+          await outcome({ ...RUST, ...env }, { resources: [`${scheme}://localhost:${port}/`], timeout: 600, ...extra });
+          expect(counting.calls).to.have.length(0);
+        });
+      }
+
+      it('should deliver a malformed env proxy construction error to the callback on both engines even when NO_PROXY exempts the target', async function () {
+        const vars = { HTTP_PROXY: 'proxy.corp:3128', http_proxy: 'proxy.corp:3128', NO_PROXY: 'localhost', no_proxy: 'localhost' };
+        const opts = { resources: ['https://localhost:1/'], timeout: 600 };
+        const js = await outcome({ WAIT_ON_ENGINE: 'js', ...NO_PROXY_ENV, ...vars }, opts);
+        expect(js).to.match(/Invalid URL protocol/);
+        expect(await outcome({ ...RUST, ...vars }, opts)).to.equal(js);
         expect(counting.calls).to.have.length(0);
       });
     });
@@ -467,31 +563,41 @@ describe('engine selection', function () {
 
     describe('routesHttpToRust', function () {
       const base = { addon: {}, validatedOpts: { strictSSL: false }, socketPath: undefined, env: {}, url: 'http://localhost:1/' };
-      const cells = [
+      const https = { url: 'https://localhost:1/' };
+      const proxyObj = (extra) => ({ validatedOpts: { strictSSL: false, proxy: { host: 'h', port: 1, ...extra } } });
+      const toJs = [
         ['no addon is loaded', { addon: null }],
-        ['a unix socketPath is set', { socketPath: '/tmp/sock' }],
-        ['ca is set', { validatedOpts: { strictSSL: false, ca: 'x' } }],
-        ['cert is set', { validatedOpts: { strictSSL: false, cert: 'x' } }],
-        ['key is set', { validatedOpts: { strictSSL: false, key: 'x' } }],
-        ['passphrase is set', { validatedOpts: { strictSSL: false, passphrase: 'x' } }],
-        ['strictSSL is true', { validatedOpts: { strictSSL: true } }],
-        ['proxy is false', { validatedOpts: { strictSSL: false, proxy: false } }],
-        ['proxy is an object', { validatedOpts: { strictSSL: false, proxy: { host: 'h', port: 1 } } }],
-        ['HTTP_PROXY is set', { env: { HTTP_PROXY: 'http://p:1' } }],
-        ['http_proxy is set', { env: { http_proxy: 'http://p:1' } }],
-        ['HTTPS_PROXY is set', { env: { HTTPS_PROXY: 'http://p:1' } }],
-        ['https_proxy is set', { env: { https_proxy: 'http://p:1' } }],
-        ['the url has userinfo', { url: 'http://u:p@localhost:1/' }]
+        ['the url has userinfo', { url: 'http://u:p@localhost:1/' }],
+        ['an https target selects HTTPS_PROXY', { ...https, env: { HTTPS_PROXY: 'http://p:1' } }],
+        ['an https target selects https_proxy', { ...https, env: { https_proxy: 'http://p:1' } }],
+        ['an https target falls back to HTTP_PROXY', { ...https, env: { HTTP_PROXY: 'http://p:1' } }],
+        ['the proxy object protocol is https', proxyObj({ protocol: 'https:' })],
+        ['the proxy object protocol is socks5', proxyObj({ protocol: 'socks5' })],
+        ['the proxy object host cannot form a URL', proxyObj({ host: 'bad host' })],
+        ['HTTPS_PROXY is an https URL on an http target', { env: { HTTPS_PROXY: 'https://p:1' } }],
+        ['HTTP_PROXY is malformed and NO_PROXY exempts the target', { env: { HTTP_PROXY: 'proxy.corp:3128', NO_PROXY: 'localhost' } }]
       ];
-      for (const [label, override] of cells) {
+      for (const [label, override] of toJs) {
         it(`should route to JS when ${label}`, function () {
           expect(routesHttpToRust({ ...base, ...override })).to.equal(false);
         });
       }
 
-      it('should route to Rust when the addon is loaded and no L5 condition holds', function () {
-        expect(routesHttpToRust(base)).to.equal(true);
-      });
+      const toRust = [
+        ['no L5 condition holds', {}],
+        ['a unix socketPath is set with a malformed HTTP_PROXY', { socketPath: '/tmp/sock', env: { HTTP_PROXY: 'nope' } }],
+        ['TLS options and strictSSL are set', { validatedOpts: { strictSSL: true, ca: 'x', cert: 'x', key: 'x', passphrase: 'x' } }],
+        ['proxy is false with an https HTTPS_PROXY', { validatedOpts: { strictSSL: false, proxy: false }, env: { HTTPS_PROXY: 'https://p:1' } }],
+        ['the proxy object is http', proxyObj({ protocol: 'http:' })],
+        ['an https target has a proxy object', { ...https, ...proxyObj({}) }],
+        ['an http target has HTTP_PROXY', { env: { HTTP_PROXY: 'http://p:1' } }],
+        ['an https target is exempted by NO_PROXY', { ...https, env: { HTTPS_PROXY: 'http://p:1', NO_PROXY: 'localhost' } }]
+      ];
+      for (const [label, override] of toRust) {
+        it(`should route to Rust when ${label}`, function () {
+          expect(routesHttpToRust({ ...base, ...override })).to.equal(true);
+        });
+      }
     });
   });
 
@@ -519,6 +625,43 @@ describe('engine selection', function () {
       const r = runHung('rust-strict');
       expect(r.status, r.stderr).to.equal(0);
       expect(r.stdout).to.include('settled');
+    });
+  });
+
+  // KTD1: strictSSL without ca trusts what Node trusts by default, NODE_EXTRA_CA_CERTS
+  // included (read at process start, so a subprocess). Real clock.
+  describe('NODE_EXTRA_CA_CERTS with strictSSL and no ca', function () {
+    this.timeout(30000);
+    const EXTRA_CA_API = path.join(__dirname, 'fixtures', 'extra-ca-api.js');
+    let fx;
+
+    before(function () {
+      fx = tlsFixture();
+      if (!fx) this.skip();
+    });
+
+    after(function () {
+      if (fx) fx.cleanup();
+    });
+
+    function runExtraCa(vars) {
+      const env = { ...process.env, NODE_EXTRA_CA_CERTS: path.join(fx.dir, 'cert.pem') };
+      delete env.WAIT_ON_NATIVE_LIBRARY_PATH;
+      Object.assign(env, vars);
+      const r = childProcess.spawnSync(process.execPath, [EXTRA_CA_API, fx.dir], { env, encoding: 'utf8', timeout: 10000 });
+      expect(r.status, r.stderr).to.equal(0);
+      return r.stdout.trim().split(' ');
+    }
+
+    it('should resolve under js', function () {
+      expect(runExtraCa({ WAIT_ON_ENGINE: 'js' })).to.deep.equal(['resolved', '0']);
+    });
+
+    it('should resolve under rust-strict with the addon checking', function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      const [outcome, checks] = runExtraCa({ WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: COUNTING_ADDON });
+      expect(outcome).to.equal('resolved');
+      expect(Number(checks)).to.be.above(0);
     });
   });
 
