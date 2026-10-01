@@ -739,6 +739,65 @@ describe('engine selection', function () {
 
   // AE-L4-4 / R-L4-9: an API caller's process exits once waitOn settles, even with a
   // request in flight to a server that never answers. Real clock, subprocess.
+  // L7 U6: front-door output of the Rust loop under the real addon. Real clock.
+  describe('real addon loop at the front door', function () {
+    this.timeout(6000);
+    const hasAddon = () => fs.existsSync(addonPath({}));
+    const STRICT_REAL = { WAIT_ON_ENGINE: 'rust-strict' };
+    const message = (vars, opts) => withEnv(vars, () => waitOn(opts).then(() => 'resolved', (e) => e.message));
+
+    it('should reject with the identical timeout message on js and rust-strict for a missing file', async function () {
+      const file = path.join(os.tmpdir(), `wait-on-missing-${process.pid}`);
+      const opts = { resources: [file], timeout: 300, interval: 50 };
+      const js = await message({ WAIT_ON_ENGINE: 'js' }, opts);
+      expect(js).to.equal(`Timed out waiting for: ${file}`);
+      if (hasAddon()) expect(await message(STRICT_REAL, opts)).to.equal(js);
+    });
+
+    describe('verbose lines', function () {
+      const closers = [];
+      before(function () {
+        if (!hasAddon()) this.skip();
+      });
+      afterEach(function () {
+        while (closers.length) closers.pop()();
+      });
+
+      function listen(at) {
+        const server = net.createServer((s) => s.destroy());
+        closers.push(() => server.close());
+        return new Promise((resolve) => server.listen(...at, () => resolve(server.address())));
+      }
+      const verboseLines = (opts) => captureLog(() => message(STRICT_REAL, { verbose: true, interval: 50, ...opts }));
+
+      it('should log a successful TCP connection for a listening tcp port', async function () {
+        const { port } = await listen([0, '127.0.0.1']);
+        const lines = await verboseLines({ resources: [`tcp:127.0.0.1:${port}`], timeout: 2000 });
+        expect(lines).to.include(`  TCP connection successful to host:127.0.0.1 port:${port}`);
+      });
+
+      it('should log a socket connection for a listening socket', async function () {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-loop-sock-'));
+        closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+        const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
+        await listen([sock]);
+        const lines = await verboseLines({ resources: [`socket:${sock}`], timeout: 2000 });
+        expect(lines).to.include(`  connected to socket:${sock}`);
+      });
+
+      it('should log a timed-out connect, or the OS error, for a black-holed tcp host', async function () {
+        const lines = await verboseLines({ resources: ['tcp:10.255.255.1:9'], tcpTimeout: 200, timeout: 600 });
+        expect(lines).to.include(`wait-on(${process.pid}) Timed out waiting for: tcp:10.255.255.1:9; exiting with error`);
+        // a routed host drops the SYN until tcpTimeout; a host without a route fails at once
+        const reasons = lines.filter((l) => l.startsWith('  timed out connecting to TCP') || l.includes('(os error'));
+        expect(reasons).to.not.be.empty;
+        if (!reasons[0].includes('(os error')) {
+          expect(reasons[0]).to.equal('  timed out connecting to TCP host:10.255.255.1 port:9 tcpTimeout:200ms');
+        }
+      });
+    });
+  });
+
   describe('process lifetime (hung http server)', function () {
     this.timeout(10000);
     const HUNG_API = path.join(__dirname, 'fixtures', 'hung-http-api.js');
