@@ -16,15 +16,44 @@ Two files: [`.github/workflows/node.js.yml`](../../.github/workflows/node.js.yml
 
 ## npm script hook contract
 
-CI calls these with `npm run --if-present`; an undefined script is a green no-op. Lanes change CI behavior only by defining them in `package.json`. `ci:rs` and `build:napi` exist (L1); `ci:rs:package` does not yet.
+CI calls these with `npm run --if-present`; an undefined script is a green no-op. Lanes change CI behavior only by defining them in `package.json`. `ci:rs` and `build:napi` exist (L1); `ci:rs:package` exists (L9).
 
 | Script | Called by | Input | Must produce | Status |
 |---|---|---|---|---|
-| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `npm ci` already done | exit code only; builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict` | exists (L1, `scripts/ci-rs.js`) |
-| `build:napi` | `napi` (8 rows) | `-- --target <triple> [extra-args]` (forwarded to `napi build`; `-x` on musl rows) | the target's addon under `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (uploaded as `prebuilds/**`) | exists (L1, `scripts/build-napi.js`); matrix hardening planned (lane L9) |
-| `ci:rs:package` | `package` | all targets' `prebuilds/**` already downloaded into `prebuilds/` | `wait-on-*.tgz` and `SHA256SUMS` at the repo root; install-matrix checks and size report | Status: planned (lane L9) |
+| `ci:rs` | `rust` (3 OSes) | toolchain, cargo cache, `cargo-deny`, `npm ci` already done | exit code only; builds the host addon itself, runs fmt, clippy `-D warnings`, test, deny, mocha under `WAIT_ON_ENGINE=rust-strict`, then the startup benchmark (`scripts/bench-startup.js`, L8), which fails the job when the Rust overhead exceeds `benchmarks/startup-baseline.json`'s threshold | exists (L1, `scripts/ci-rs.js`) |
+| `build:napi` | `napi` (8 rows) | `-- --target <triple> [extra-args]` (forwarded to `napi build`; `-x` on musl rows) | the target's addon under `prebuilds/<platform>-<arch>[-musl]/wait-on.node` (uploaded as `prebuilds/**`) | exists (L1, `scripts/build-napi.js`); its `TARGETS` table is the one list of the eight targets (L9) |
+| `ci:rs:package` | `package` | all targets' `prebuilds/**` already downloaded into `prebuilds/` | `wait-on-*.tgz` and `SHA256SUMS` at the repo root; install-matrix checks and size report | exists (L9, `scripts/ci-rs-package.js`); see [below](#cirspackage) |
 
-If L9 needs a different `build:napi` argument shape, the `extra-args` matrix column is the one place to adapt, via an operator PR.
+If a lane needs a different `build:napi` argument shape, the `extra-args` matrix column is the one place to adapt, via an operator PR.
+
+## ci:rs:package
+
+`npm run ci:rs:package [-- --host-only]` (`scripts/ci-rs-package.js`) runs, stopping at the first failure:
+
+1. Guard: every target dir from `build-napi.js` `TARGETS` must hold `prebuilds/<dir>/wait-on.node`, else it exits 1 listing the missing ones. `--host-only` (developer runs, never CI) requires only the host dir.
+2. `npm pack --json` (stale `wait-on-*.tgz` removed first); the file list must hold every required addon and nothing from `target/`, `crates/`, `scripts/`, `docs/`, `test/`, `benchmarks/`, `Cargo.*`; `package.json` must declare no `preinstall`/`install`/`postinstall`/`prepare` script and no `optionalDependencies`.
+3. Size report (packed, unpacked, JS-only unpacked, per-target bytes) and `SHA256SUMS` (`sha256sum -c` format).
+4. Install cells, each in a fresh temp project with `WAIT_ON_NATIVE_LIBRARY_PATH` removed: `npm install --ignore-scripts`, the same with `--omit=optional`, and `pnpm add --ignore-scripts` (pnpm pinned in the script, fetched with `npm exec`). `scripts/prebuild-probe.js` then runs under `WAIT_ON_ENGINE=rust-strict`: it loads the installed engine, waits on a local tcp port through the API and the CLI, and prints the addon path, which must be the host dir inside the installed package.
+5. AE1 container cells: `node:24-trixie-slim` (glibc) and `node:24-alpine` (musl) images install the tarball at build time with `ignore-scripts=true`, then run with `--read-only --network none -e WAIT_ON_ENGINE=rust-strict`. A ready cell must exit 0 with the addon from `linux-<arch>[-musl]`; a timeout cell (`--no-listener`) must exit non-zero with `Timed out waiting for`. Without docker, or without the linux prebuilds for the runner arch, the cells skip with one line locally and fail under `CI`.
+
+Sizes with all eight prebuilds from `spike-next-rs` (run 36773818018, 2026-09-30):
+
+| | bytes |
+|---|---|
+| packed (tarball) | 3,359,787 |
+| unpacked | 8,793,755 |
+| JS-only unpacked | 61,283 |
+| JS-only packed (no `prebuilds/`) | 18,892 |
+| `darwin-arm64` | 1,220,256 |
+| `darwin-x64` | 1,169,072 |
+| `linux-x64` | 1,365,872 |
+| `linux-arm64` | 1,444,016 |
+| `linux-x64-musl` | 926,784 |
+| `linux-arm64-musl` | 892,808 |
+| `win32-x64` | 894,976 |
+| `win32-arm64` | 818,688 |
+
+No size threshold is enforced; the numbers are PO5's decision input.
 
 ## napi target matrix
 

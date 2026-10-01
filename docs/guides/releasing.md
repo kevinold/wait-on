@@ -13,13 +13,14 @@ Every push to `spike-next-rs` in `kevinold/wait-on` whose `build`, `rust`, and `
 
 - Tag: `rs-<package.json version>-<sha7>`, for example `rs-10.0.0-rc.1-abc1234`. Marked prerelease on GitHub.
 - Assets: the multi-platform `wait-on-*.tgz` and `SHA256SUMS`.
-- Skipped when no tarball exists, which is every run until `ci:rs:package` is defined (lane L9).
+- The tarball carries all eight prebuilds (about 3.4 MB packed; sizes in [ci.md](ci.md#cirspackage)) and installs with `--ignore-scripts`, `--omit=optional`, or pnpm; `ci:rs:package` proves each before the upload.
+- Linux glibc addons need glibc 2.39 or newer (built on ubuntu-24.04: Debian 13, Ubuntu 24.04, Fedora 40+). On older glibc, `WAIT_ON_ENGINE=rust` falls back to the JS engine and `rust-strict` fails to load. musl (Alpine) is unaffected. Lowering the floor is a `napi` build change (an older glibc target), not yet done.
 - Never published to npm.
 
 Install and try:
 
 ```bash
-npm i <tarball-url>
+npm i --ignore-scripts <tarball-url>
 WAIT_ON_ENGINE=rust npx wait-on tcp:3000
 ```
 

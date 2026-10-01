@@ -25,13 +25,15 @@
   },
   "license": "MIT",
   "scripts": {
+    "bench:startup": "node scripts/bench-startup.js",
     "build:napi": "node scripts/build-napi.js",
     "ci:rs": "node scripts/ci-rs.js",
     "lint": "eslint \"lib/**/*.js\" \"test/**/*.js\" \"scripts/**/*.js\" \"benchmarks/**/*.js\" \"bin/wait-on\"",
     "test": "npm run lint && npm run test:types && npm run test:mocha",
     "test:coverage": "nyc npm run test:mocha",
     "test:mocha": "mocha --exit \"test/**/*.mocha.js\"",
-    "test:types": "tsc -p test/tsconfig.json"
+    "test:types": "tsc -p test/tsconfig.json",
+    "ci:rs:package": "node scripts/ci-rs-package.js"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -2,7 +2,7 @@
 
 // npm run ci:rs — the Rust gate the CI `rust` job runs on ubuntu, macos and windows:
 // fmt, clippy, cargo test, cargo deny, build the host addon, then the whole mocha suite
-// with WAIT_ON_ENGINE=rust-strict. No shell, so it behaves the same under Windows cmd.
+// with WAIT_ON_ENGINE=rust-strict, then the startup benchmark. No shell, so it behaves the same under Windows cmd.
 
 const childProcess = require('child_process');
 const path = require('path');
@@ -18,7 +18,9 @@ function steps({ repoRoot }) {
       cmd: process.execPath,
       args: [require.resolve('mocha/bin/mocha.js'), '--exit', 'test/**/*.mocha.js'],
       env: { ...process.env, WAIT_ON_ENGINE: 'rust-strict' }
-    }
+    },
+    // last, so a benchmark failure never masks a test failure
+    { cmd: process.execPath, args: [path.join(repoRoot, 'scripts', 'bench-startup.js')] }
   ];
 }
 

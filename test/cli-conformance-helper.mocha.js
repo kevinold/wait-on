@@ -63,6 +63,35 @@ describe('cli-conformance harness helper (#246)', function () {
     });
   });
 
+  describe('expectElapsed', function () {
+    it('should expose one frozen tolerance of 100ms early and 1000ms late', function () {
+      expect(h.TOLERANCE_MS).to.deep.equal({ early: 100, late: 1000 });
+      expect(Object.isFrozen(h.TOLERANCE_MS)).to.equal(true);
+    });
+
+    it('should pass at both inclusive bounds', function () {
+      h.expectElapsed({ elapsedMs: 700 }, 800);
+      h.expectElapsed({ elapsedMs: 1800 }, 800);
+    });
+
+    it('should fail below the lower bound naming elapsed, expected and the bound', function () {
+      expect(() => h.expectElapsed({ elapsedMs: 699 }, 800))
+        .to.throw()
+        .with.property('message')
+        .that.includes('699')
+        .and.includes('800')
+        .and.includes('700');
+    });
+
+    it('should fail above the upper bound naming elapsed and the bound', function () {
+      expect(() => h.expectElapsed({ elapsedMs: 1801 }, 800))
+        .to.throw()
+        .with.property('message')
+        .that.includes('1801')
+        .and.includes('1800');
+    });
+  });
+
   describe('runCli', function () {
     it('spawns the CLI and reports a non-zero exit + elapsed time on timeout', async function () {
       const res = await h.runCli(h.FAST_OPTS.concat(['tcp:127.0.0.1:1'])); // nothing listening -> timeout
