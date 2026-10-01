@@ -15,7 +15,7 @@ describe('prebuild-probe', function () {
 
   const REPO = path.join(__dirname, '..');
   const PROBE = path.join(REPO, 'xtask', 'assets', 'prebuild-probe.js');
-  const CHECKS_ADDON = path.join(__dirname, 'fixtures', 'fake-addon-checks.js');
+  const FAKE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
 
   function tmp() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-pkg-'));
@@ -30,24 +30,24 @@ describe('prebuild-probe', function () {
   }
 
   function probe(vars, args = []) {
-    const env = { ...process.env, WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: CHECKS_ADDON, ...vars };
+    const env = { ...process.env, WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: FAKE_ADDON, ...vars };
     const r = childProcess.spawnSync(process.execPath, [PROBE, ...args], { cwd: linkedProject(), env, encoding: 'utf8' });
     return { code: r.status, stdout: r.stdout, stderr: r.stderr };
   }
 
   it('should print the loaded addon path and pass API and CLI checks against the fixture addon', function () {
-    const { code, stdout, stderr } = probe({ WAIT_ON_FAKE_ADDON_ANSWER: 'ready' });
+    const { code, stdout, stderr } = probe({});
     expect(code, stderr).to.equal(0);
     const line = JSON.parse(stdout.trim());
-    expect(line.addonPath).to.equal(CHECKS_ADDON);
-    expect(line.realpath).to.equal(fs.realpathSync(CHECKS_ADDON));
+    expect(line.addonPath).to.equal(FAKE_ADDON);
+    expect(line.realpath).to.equal(fs.realpathSync(FAKE_ADDON));
     expect(fs.realpathSync(line.pkgDir)).to.equal(fs.realpathSync(REPO));
     expect(line.api).to.equal(true);
     expect(line.cli).to.equal(0);
   });
 
   it('should exit non-zero with the timeout message when nothing listens', function () {
-    const { code, stdout, stderr } = probe({ WAIT_ON_FAKE_ADDON_ANSWER: 'refused' }, ['--no-listener', '--timeout', '300']);
+    const { code, stdout, stderr } = probe({ WAIT_ON_FAKE_ADDON_ANSWER: 'timeout' }, ['--no-listener', '--timeout', '300']);
     expect(code).to.not.equal(0);
     expect(stderr).to.include('Timed out waiting for');
     const line = JSON.parse(stdout.trim());

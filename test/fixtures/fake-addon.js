@@ -1,22 +1,24 @@
 'use strict';
 
-// Stands in for the native addon so the addon-present branch runs without a build.
-// fileSize records each probed path and answers a constant (WAIT_ON_FAKE_FILE_SIZE, default 1)
-// that JS cannot produce for a missing file, so a success proves the addon was asked.
-// runCommand records { command, timeoutMs } and answers ok:true without spawning
-// (ok:false when WAIT_ON_FAKE_COMMAND_OK=0), an outcome JS cannot give for the test commands.
+// Stands in for the native addon so the Rust-shim branch runs without a build (KTD7).
+// wait(spec) records the spec in calls and answers ready, or with
+// WAIT_ON_FAKE_ADDON_ANSWER=timeout the Rust timeout result naming every resource.
+// With WAIT_ON_FAKE_ADDON_LOG set, each call also lands there as one JSON line (proof
+// from a CLI subprocess).
+const fs = require('fs');
+
 const calls = [];
 
 module.exports = {
   version: () => 'fake',
   noop() {},
   calls,
-  async fileSize(filePath) {
-    calls.push(filePath);
-    return Number(process.env.WAIT_ON_FAKE_FILE_SIZE ?? 1);
-  },
-  async runCommand(command, timeoutMs) {
-    calls.push({ command, timeoutMs });
-    return { ok: process.env.WAIT_ON_FAKE_COMMAND_OK !== '0', stdout: 'fake', error: 'fake' };
+  async wait(spec) {
+    calls.push(spec);
+    if (process.env.WAIT_ON_FAKE_ADDON_LOG) fs.appendFileSync(process.env.WAIT_ON_FAKE_ADDON_LOG, JSON.stringify(spec) + '\n');
+    if (process.env.WAIT_ON_FAKE_ADDON_ANSWER === 'timeout') {
+      return { ok: false, error: `Timed out waiting for: ${spec.resources.map((r) => r.name).join(', ')}` };
+    }
+    return { ok: true, error: null };
   }
 };

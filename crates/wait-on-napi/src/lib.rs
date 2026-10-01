@@ -6,6 +6,7 @@ use napi_derive::napi;
 use wait_on_core::parse::Interval;
 
 mod http;
+pub mod wait;
 
 #[napi]
 pub fn version() -> String {

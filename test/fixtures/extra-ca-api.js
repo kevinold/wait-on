@@ -2,7 +2,7 @@
 
 // KTD1: serves https with the tls-fixture cert in argv[2] and polls it with strictSSL and
 // no ca, so only NODE_EXTRA_CA_CERTS can make it trusted. Prints the outcome and the
-// counting addon's check total (0 when no addon path is set, so js never loads it).
+// counting addon's wait-call total (0 when no addon path is set, so js never loads it).
 const fs = require('fs');
 const https = require('https');
 const path = require('path');
@@ -14,8 +14,8 @@ const server = https.createServer({ key: read('key.pem'), cert: read('cert.pem')
 server.listen(0, 'localhost', async () => {
   const resources = [`https://localhost:${server.address().port}/`];
   const outcome = await waitOn({ resources, strictSSL: true, timeout: 2000, interval: 100 }).then(() => 'resolved', (e) => e.message);
-  const checks = counting ? counting.calls.filter((c) => c.type === 'check').length : 0;
-  process.stdout.write(`${outcome} ${checks}\n`);
+  const waits = counting ? counting.calls.filter((c) => c.type === 'wait').length : 0;
+  process.stdout.write(`${outcome} ${waits}\n`);
   server.closeAllConnections();
   server.close();
 });

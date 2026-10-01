@@ -1,8 +1,9 @@
 'use strict';
 
-// Counting addon (KTD10): load via WAIT_ON_NATIVE_LIBRARY_PATH to prove which HTTP
-// checks reached the addon. Records every HttpChecker construction and check call, and
-// delegates to the real host prebuild when it exists; otherwise answers canned results.
+// Counting addon (KTD7): load via WAIT_ON_NATIVE_LIBRARY_PATH to prove a wait ran in Rust.
+// Records every wait call as { type: 'wait', spec, validateStatus } and delegates to the
+// real host prebuild when it exists; otherwise answers canned: ready unless
+// validateStatus(200) is false for an http resource, then the Rust timeout result.
 
 const fs = require('fs');
 const { addonPath } = require('../../lib/engine');
@@ -11,33 +12,22 @@ const realPath = addonPath({});
 const real = fs.existsSync(realPath) ? require(realPath) : null;
 const calls = [];
 
-class HttpChecker {
-  constructor(opts) {
-    this.opts = opts;
-    calls.push({ type: 'construct', opts });
-    if (module.exports.constructError) throw module.exports.constructError;
-    this.inner = real ? new real.HttpChecker(opts) : null;
-  }
-
-  check(validateStatus) {
-    calls.push({ type: 'check', opts: this.opts, validateStatus });
-    if (this.inner) return this.inner.check(validateStatus);
-    const ok = validateStatus ? validateStatus(200) : true;
-    return Promise.resolve({ ok, status: 200, statusText: 'OK' });
-  }
-
-  cancel() {
-    calls.push({ type: 'cancel', opts: this.opts });
-    if (this.inner) this.inner.cancel();
-  }
+function wait(spec, log, validateStatus) {
+  calls.push({ type: 'wait', spec, validateStatus });
+  if (module.exports.constructError) return Promise.reject(module.exports.constructError);
+  if (real) return real.wait(spec, log, validateStatus);
+  const ready = !validateStatus || spec.resources.every((r) => r.kind !== 'http' || validateStatus(200));
+  return Promise.resolve(
+    ready ? { ok: true, error: null } : { ok: false, error: `Timed out waiting for: ${spec.resources.map((r) => r.name).join(', ')}` }
+  );
 }
 
 module.exports = {
   version: () => (real ? real.version() : 'counting'),
   noop() {},
-  HttpChecker,
+  wait,
   calls,
-  constructError: null, // set to make the next constructions throw (client build failure)
+  constructError: null, // set to make the next wait calls reject (client build failure)
   reset() {
     calls.length = 0;
     module.exports.constructError = null;

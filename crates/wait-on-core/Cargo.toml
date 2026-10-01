@@ -12,4 +12,4 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 tokio = { version = "1", features = ["net", "time", "rt", "sync", "macros"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "time", "test-util"] }

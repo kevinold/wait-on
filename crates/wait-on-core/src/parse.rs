@@ -1,5 +1,5 @@
 //! The four pure parsers the #245 property suite covers, transcribed from their JS regexes
-//! (lib/wait-on.js, bin/wait-on `parseInterval`) so the differential can hold them equal.
+//! (lib/resources.js, bin/wait-on `parseInterval`) so the differential can hold them equal.
 //! Std only, and every slice is at a `char` boundary, so no input can panic.
 
 /// `PREFIX_RE` split plus the `createResource$` type routing.

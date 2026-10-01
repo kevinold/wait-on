@@ -31,9 +31,13 @@ developer manual is [`docs/guides/README.md`](docs/guides/README.md).
 
 ## Architecture
 
-An rxjs polling pipeline in `lib/wait-on.js`:
+`lib/wait-on.js` is the front door: `waitOn` → `waitOnImpl` validates, resolves the
+engine (`lib/engine.js`), then lazily requires either the JS engine (`lib/engine-js.js`,
+the rxjs pipeline below) or the Rust shim (`lib/engine-rust.js`, one `addon.wait` call
+running the loop in `crates/wait-on-core/src/waiter.rs`). Shared pure helpers
+(`PREFIX_RE`, resource parsing, proxy/header preparation) live in `lib/resources.js`.
 
-- `waitOn` → `waitOnImpl`: validate `opts` against the joi `WAIT_ON_SCHEMA`, fail fast on
+- JS engine: validate `opts` against the joi `WAIT_ON_SCHEMA`, fail fast on
   malformed resources (`validateResources`), build one observable per resource with
   `createResource$`, then `combineLatest` them and `merge` in a `timer(timeout)` error
   observable. The stream runs `takeWhile(states => states.some(x => !x))` until every
@@ -58,8 +62,10 @@ An rxjs polling pipeline in `lib/wait-on.js`:
   per-request undici dispatcher (`Agent`, `ProxyAgent`, `EnvHttpProxyAgent`) that carries
   TLS options and proxy settings.
 
-**Add a new resource type:** extend `PREFIX_RE`, add a `case` in the `createResource$`
-switch, write a `create<Type>$` factory following the existing
+**Add a new resource type:** extend `PREFIX_RE` (`lib/resources.js`), add a `case` in the
+`createResource$` switch (`lib/engine-js.js`) and the `KINDS` map in `lib/engine-rust.js`,
+a matching `Kind` in `crates/wait-on-core/src/waiter.rs` (napi `kind` in
+`crates/wait-on-napi/src/wait.rs`), write a `create<Type>$` factory following the existing
 `timer → mergeMap → startWith(false) → distinctUntilChanged → take(2)` shape (honor
 `reverse` via `negateAsync`), and add a `case` in `validateResource` when the resource
 has syntax worth failing fast on.
