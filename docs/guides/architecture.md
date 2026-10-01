@@ -149,6 +149,7 @@ On the Rust engine, beyond the per-check differences listed with each check abov
 - A `command:` attempt may outlive the process exit (since L6): the loop cannot abort a `spawn_blocking` attempt at settle.
 - A verbose line from a check still in flight at settle is dropped under Rust (the check is aborted); JS may still print it after the completion line.
 - An out-of-range tcp port (e.g. `tcp:localhost:99999`) errors on both engines with different text: JS `Port should be >= 0 and < 65536…`, Rust `Failed to convert u32 to u16 on ResourceSpec.port …` (napi's spec conversion).
+- The error's stack trace differs: the CLI prints the same first line (`Error: Timed out waiting for: …`) on both engines, but the frames below it name `lib/engine-js.js` and rxjs internals under JS and `lib/engine-rust.js` under Rust.
 
 ## Prebuilds and loader
 
