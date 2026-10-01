@@ -79,11 +79,10 @@ const POLL: Duration = Duration::from_millis(10);
 
 type Captured = Arc<Mutex<Vec<u8>>>;
 
-fn capture(pipe: Option<impl Read + Send + 'static>) -> (Captured, JoinHandle<()>) {
+fn capture(mut pipe: impl Read + Send + 'static) -> (Captured, JoinHandle<()>) {
     let buf = Captured::default();
     let sink = Arc::clone(&buf);
     let reader = thread::spawn(move || {
-        let Some(mut pipe) = pipe else { return };
         let mut chunk = [0u8; 8192];
         while let Ok(n @ 1..) = pipe.read(&mut chunk) {
             let mut kept = sink.lock().unwrap();
@@ -113,8 +112,8 @@ fn run(mut shell: Command, command: &str, timeout_ms: u32) -> CommandResult {
         Ok(child) => child,
         Err(e) => return failed(&e.to_string()),
     };
-    let (out, out_reader) = capture(child.stdout.take());
-    let (err, err_reader) = capture(child.stderr.take());
+    let (out, out_reader) = capture(child.stdout.take().expect("stdout is piped"));
+    let (err, err_reader) = capture(child.stderr.take().expect("stderr is piped"));
     let deadline =
         (timeout_ms > 0).then(|| Instant::now() + Duration::from_millis(timeout_ms.into()));
     let expired = || deadline.is_some_and(|d| Instant::now() >= d);
@@ -209,13 +208,11 @@ mod tests {
         let file = dir.join("f");
         fs::write(&file, "x").unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).unwrap();
-        let denied = fs::metadata(&file).is_err(); // root can still stat: skip then
+        let denied = fs::metadata(&file).is_err();
         let size = super::file_size(file.to_str().unwrap());
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         fs::remove_dir_all(&dir).unwrap();
-        if denied {
-            assert_eq!(size, -1);
-        }
+        assert_eq!(size == -1, denied); // root can still stat: then the size is real
     }
 
     // run_command cases use per-OS shell builtins so cargo test needs no node.
@@ -246,6 +243,22 @@ mod tests {
     } else {
         "sleep 1; echo done"
     };
+    // `start /b` children inherit cmd's stdout pipe, like a backgrounded `sleep`.
+    const GRANDCHILD_ECHO: &str = if WIN {
+        "start /b powershell -NoProfile -Command Start-Sleep 3 & echo hi"
+    } else {
+        "sleep 3 & echo hi"
+    };
+    const OUT_2MB: &str = if WIN {
+        "powershell -NoProfile -Command [Console]::Out.Write('x' * 2000000)"
+    } else {
+        "head -c 2000000 /dev/zero"
+    };
+
+    #[test]
+    fn not_ready_timed_out_reads_timed_out() {
+        assert_eq!(super::NotReady::TimedOut.to_string(), "timed out");
+    }
 
     #[test]
     fn run_command_is_ready_with_stdout_when_the_command_exits_0() {
@@ -308,11 +321,8 @@ mod tests {
     fn run_command_kills_an_attempt_at_the_timeout() {
         let start = Instant::now();
         let r = run_command(SLEEP5, 200);
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "{:?}",
-            start.elapsed()
-        );
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
         assert!(!r.ok);
         assert!(r.error.contains("killed after 200ms"), "{r:?}");
     }
@@ -324,24 +334,19 @@ mod tests {
         assert_eq!(r.stdout.trim(), "done");
     }
 
-    #[cfg(unix)]
     #[test]
     fn run_command_returns_at_the_timeout_when_a_grandchild_holds_stdout() {
         let start = Instant::now();
-        let r = run_command("sleep 3 & echo hi", 300);
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "{:?}",
-            start.elapsed()
-        );
+        let r = run_command(GRANDCHILD_ECHO, 300);
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
         assert!(r.ok, "{r:?}");
         assert_eq!(r.stdout.trim(), "hi");
     }
 
-    #[cfg(unix)]
     #[test]
     fn run_command_caps_captured_stdout_at_1_mib() {
-        let r = run_command("head -c 2000000 /dev/zero", 0);
+        let r = run_command(OUT_2MB, 0);
         assert!(r.ok, "{r:?}");
         assert_eq!(r.stdout.len(), 1024 * 1024);
     }

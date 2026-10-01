@@ -51,12 +51,14 @@ mod tests {
         let start = std::time::Instant::now();
         let result = ready("10.255.255.1", 9, 200).await;
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(1000));
-        match result {
-            Err(NotReady::TimedOut) => assert!(elapsed >= Duration::from_millis(200)),
-            Err(NotReady::Io(_)) => assert!(elapsed < Duration::from_millis(200)),
-            Ok(()) => panic!("black-holed address reported ready"),
-        }
+        assert!(elapsed < Duration::from_millis(1000), "{elapsed:?}");
+        let reason = result.unwrap_err().to_string();
+        // TimedOut only after the bound; an Io error only before it.
+        assert_eq!(
+            reason == "timed out",
+            elapsed >= Duration::from_millis(200),
+            "{reason}"
+        );
     }
 
     #[tokio::test]
@@ -77,10 +79,12 @@ mod tests {
             .unwrap()
             .port();
         // 5000: Windows reports a loopback refusal only after ~2 s.
-        match ready("127.0.0.1", port, 5000).await {
-            Err(e @ NotReady::Io(_)) => assert!(!e.to_string().is_empty()),
-            other => panic!("expected Io, got {other:?}"),
-        }
+        let reason = ready("127.0.0.1", port, 5000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_ne!(reason, "timed out"); // an Io error, not the bound
+        assert!(!reason.is_empty());
     }
 
     #[tokio::test]
@@ -92,9 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn ipv6_literal() {
-        let Ok(listener) = TcpListener::bind("[::1]:0").await else {
-            return; // no IPv6 loopback on this host
-        };
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(ready("::1", port, 300).await.is_ok());
     }
@@ -102,8 +104,11 @@ mod tests {
     #[tokio::test]
     async fn resolve_error_is_not_ready() {
         // Large bound so a slow CI resolver cannot turn this into TimedOut.
-        let result = ready("no-such-host.invalid", 1, 5000).await;
-        assert!(matches!(result, Err(NotReady::Io(_))), "{result:?}");
+        let reason = ready("no-such-host.invalid", 1, 5000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_ne!(reason, "timed out"); // an Io error, not the bound
     }
 
     #[tokio::test]

@@ -34,8 +34,8 @@ mod tests {
     #[tokio::test]
     async fn not_ready_when_missing() {
         let path = temp_path("no-such-sock");
-        let result = ready(path.to_str().unwrap()).await;
-        assert!(matches!(result, Err(NotReady::Io(_))), "{result:?}");
+        // `ready` has no timeout, so every error is `NotReady::Io`.
+        assert!(ready(path.to_str().unwrap()).await.is_err());
     }
 
     #[cfg(windows)]
@@ -52,7 +52,6 @@ mod tests {
     #[tokio::test]
     async fn not_ready_when_pipe_missing() {
         let path = format!(r"\\.\pipe\wait-on-core-missing-{}", std::process::id());
-        let result = ready(&path).await;
-        assert!(matches!(result, Err(NotReady::Io(_))), "{result:?}");
+        assert!(ready(&path).await.is_err());
     }
 }
