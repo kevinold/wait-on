@@ -335,6 +335,97 @@ describe('engine selection', function () {
     });
   });
 
+  describe('real addon wait', function () {
+    let addon;
+
+    before(function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      addon = require(addonPath({}));
+    });
+
+    const BASE = { delayMs: 0, intervalMs: 50, windowMs: 0, tcpTimeoutMs: 300, commandTimeoutMs: 0, reverse: false, verbose: false };
+
+    it('should resolve ok after delivering the waiting line when the file is ready', async function () {
+      const lines = [];
+      const r = await addon.wait(
+        { ...BASE, timeoutMs: 2000, resources: [{ name: __filename, kind: 'file', path: __filename }] },
+        (line) => lines.push(line)
+      );
+      expect(lines).to.include(`waiting for 1 resources: ${__filename}`);
+      expect(r).to.deep.equal({ ok: true, error: null });
+    });
+
+    describe('with servers', function () {
+      const closers = [];
+      afterEach(function () {
+        while (closers.length) closers.pop()();
+      });
+
+      function listen(server, at) {
+        closers.push(() => server.close());
+        return new Promise((resolve) => server.listen(...at, () => resolve(server.address())));
+      }
+      const httpSpec = (port) => ({ url: `http://127.0.0.1:${port}/`, method: 'HEAD', headers: {}, followRedirect: true });
+
+      it('should resolve ok when one ready resource of each kind is waited on', async function () {
+        const { port: httpPort } = await listen(
+          http.createServer((req, res) => res.end()),
+          [0, '127.0.0.1']
+        );
+        const { port: tcpPort } = await listen(net.createServer((s) => s.destroy()), [0, '127.0.0.1']);
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-addon-wait-'));
+        closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+        const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
+        await listen(net.createServer((s) => s.destroy()), [sock]);
+        const r = await addon.wait({
+          ...BASE,
+          timeoutMs: 5000,
+          resources: [
+            { name: __filename, kind: 'file', path: __filename },
+            { name: 'http', kind: 'http', http: httpSpec(httpPort) },
+            { name: 'tcp', kind: 'tcp', path: `127.0.0.1:${tcpPort}`, host: '127.0.0.1', port: tcpPort },
+            { name: 'socket', kind: 'socket', path: sock },
+            { name: 'command', kind: 'command', command: 'exit 0' }
+          ]
+        });
+        expect(r).to.deep.equal({ ok: true, error: null });
+      });
+
+      it('should decide http readiness with validateStatus', async function () {
+        const { port } = await listen(
+          http.createServer((req, res) => res.end()),
+          [0, '127.0.0.1']
+        );
+        const spec = { ...BASE, timeoutMs: 300, resources: [{ name: 'h', kind: 'http', http: httpSpec(port) }] };
+        expect(await addon.wait(spec, undefined, (s) => s === 500)).to.deep.equal({
+          ok: false,
+          error: 'Timed out waiting for: h'
+        });
+        expect(await addon.wait(spec, undefined, (s) => s === 200)).to.deep.equal({ ok: true, error: null });
+      });
+    });
+
+    it('should resolve the exact timeout message when tcp never connects', async function () {
+      const r = await addon.wait({
+        ...BASE,
+        timeoutMs: 300,
+        resources: [{ name: 'tcp:127.0.0.1:1', kind: 'tcp', path: '127.0.0.1:1', host: '127.0.0.1', port: 1 }]
+      });
+      expect(r).to.deep.equal({ ok: false, error: 'Timed out waiting for: tcp:127.0.0.1:1' });
+    });
+
+    it('should resolve with timeoutMs, simultaneous and log all absent', async function () {
+      const r = await addon.wait({ ...BASE, resources: [{ name: __filename, kind: 'file', path: __filename }] });
+      expect(r).to.deep.equal({ ok: true, error: null });
+    });
+
+    it('should throw on an unknown resource kind', function () {
+      expect(() => addon.wait({ ...BASE, resources: [{ name: 'x', kind: 'bogus' }] })).to.throw(
+        'unknown resource kind: bogus'
+      );
+    });
+  });
+
   describe('http routing (counting addon)', function () {
     const NO_PROXY_ENV = {
       HTTP_PROXY: undefined,
