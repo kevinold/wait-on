@@ -33,7 +33,7 @@ Lane plan for sub-issue #59. Spine rules (KD-S1..KD-S9 in the spine plan) and th
 
 ## Product Contract
 
-Product Contract preservation: R-L7-1 through R-L7-13 and AE-L7-1 through AE-L7-5 keep their IDs and meaning from the lane issue; R-L7-14 is added for the operator's coverage-and-compatibility constraint. R-L7-2 is clarified, not changed: the success callback is `cb()` with `err === undefined`, never `null` (`test/api.mocha.js:876,889`, #250), so "cb(null|undefined)" reads as that. OQ1 to OQ4 are resolved into KTD6, KTD1/KTD3, KTD4 and KTD8 (each names its answering test), with the residue under Assumptions.
+Product Contract preservation: R-L7-1 through R-L7-13 and AE-L7-1 through AE-L7-5 keep their IDs and meaning from the lane issue; R-L7-14 is added for the operator's coverage-and-compatibility constraint. R-L7-1 is scoped to the R-L7-10 resolution (a wait holding a JS-routed http cell runs whole on the JS engine with zero addon calls, KTD6), which the PR body flags for PM confirmation. R-L7-2 is clarified, not changed: the success callback is `cb()` with `err === undefined`, never `null` (`test/api.mocha.js:876,889`, #250), so "cb(null|undefined)" reads as that. OQ1 to OQ4 are resolved into KTD6, KTD1/KTD3, KTD4 and KTD8 (each names its answering test), with the residue under Assumptions.
 
 ### Summary
 
@@ -59,7 +59,7 @@ After L6 every check runs in Rust but every schedule still runs in rxjs, so a `r
 
 **One call**
 
-- R-L7-1. With the addon loaded, one `waitOn` makes exactly one napi call that runs the wait (helper calls such as `version()` aside), proven by a counting addon fixture at the front door.
+- R-L7-1. With the addon loaded and every http resource Rust-routable (R-L7-10), one `waitOn` makes exactly one napi call that runs the wait (helper calls such as `version()` aside), proven by a counting addon fixture at the front door.
 - R-L7-2. Callback and Promise forms are unchanged: resolve / `cb()` with `err === undefined` on success, reject / `cb(err)` on timeout or error, the callback fires exactly once.
 - R-L7-3. Under `WAIT_ON_ENGINE=js`, or `rust` with a load failure, behavior is byte-for-byte today's JS engine; `npm test` green.
 
