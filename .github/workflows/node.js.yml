@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Spike CI budget (operator, 2026-10-01): pull requests run one representative
-# row per job (ubuntu, Node 24, linux-x64-gnu addon) and skip `package`. Pushes (merges into
+# row per job (ubuntu, Node 24, linux-x64-gnu addon; rust also on windows, where
+# platform-only bugs escaped twice) and skip `package`. Pushes (merges into
 # spike-next-rs, master, next, *.x) run the full matrix, so every merged lane is
 # still verified on every platform and the fork prerelease still carries every
 # target. Restore the full PR matrix before the spike PR leaves draft (L10).
@@ -50,8 +51,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
 
     steps:
     - uses: actions/checkout@v4
