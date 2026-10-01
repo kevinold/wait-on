@@ -10,6 +10,7 @@ pub mod http;
 pub mod parse;
 pub mod socket;
 pub mod tcp;
+pub mod waiter;
 
 /// Why a resource is not ready yet; `Display` is the reason text shown under `--verbose`.
 #[derive(Debug)]
