@@ -355,3 +355,10 @@ Four Node scripts (555 lines) plus a 423-line mocha file implement the Rust gate
 ## Resume notes
 
 - 2026-10-01: PM steer folded in before implementation — root `Justfile` is the front door (KD2); xtask keeps only `build-napi`, `package`, `bench-startup`; npm aliases call `just`; `just` pinned in `mise.toml`; CI `just` install is an operator PR (D1). Issue #75 body still contains the older "cargo xtask aliases" sentence; the steer supersedes it.
+- 2026-10-01 (later): PM steer supersedes the Justfile steer — NO Justfile and no `just`; `cargo xtask` is the single front door. Effects on this plan:
+  - KD2, R-L12-17, R-L12-18, R-L12-19, KTD7, KTD9, D1 and U5 as written are superseded. No `Justfile`, no `mise.toml` pin, no `test/justfile.mocha.js`, no `test/helpers/assert-rust-strict.js` (none were ever added).
+  - U5 becomes: xtask subcommands `ci`, `fmt`, `lint`, `test`, `cov` (cargo llvm-cov, for L13) alongside `build-napi`, `package`, `bench-startup`; `cargo xtask --help` lists all eight; each with Rust tests (step list/order as a pure fn, `--help` CLI test, dispatch branches).
+  - `ci` runs, stopping at the first failure: `cargo vet --locked` (kept first, per KD4/L11: an unvetted crate fails before any build), `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check`, host `build-napi` (in-process), mocha under `WAIT_ON_ENGINE=rust-strict`, then `bench-startup` last (kept from today's `ci:rs` so `npm run ci:rs` behaves as before; the steer's list omits it — flagged in the PR body).
+  - R-L12-12: `package.json` `ci:rs` = `cargo xtask ci`, `build:napi` = `cargo xtask build-napi`, `ci:rs:package` = `cargo xtask package`, `bench:startup` = `cargo xtask bench-startup`. U6 tests assert these.
+  - CI needs no new tool, so the operator-PR dependency (D1) is gone; R1 (package job relies on rustup auto-install) stays.
+  - Known deviation from U3: no 30 s per-spawn kill in `bench-startup` (wait-on's own `-t 10000` bounds each run) — PR residual.
