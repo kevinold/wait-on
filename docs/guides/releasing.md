@@ -152,7 +152,7 @@ Run from the repo root. `TAG` is the newest `rs-*` prerelease (`gh release list 
 | Strict load negative | exit 1, `WAIT_ON_ENGINE=rust-strict: failed to load the native addon at /nonexistent/wait-on.node` |
 | AE1, `node:24-trixie-slim` (glibc 2.41, aarch64), `--read-only --network none` | exit 0, `{"api":true,"cli":0}`, `realpath` `/app/node_modules/wait-on/prebuilds/linux-arm64/wait-on.node` |
 | AE2, `rust-strict` | 200: resolved, 1 predicate call. 204: rejected `Timed out waiting for: https-get://localhost:<port>/health`, 15 predicate calls. `engine-js`, `undici`, `rxjs` never loaded; addon inside the project. `AE2 PASS` |
-| Pending list | none: `WAIT_ON_ENGINE=rust-strict npm run test:mocha` on the base commit with a host prebuild, 496 passing, 0 failing, 0 pending; `test/parser-properties.mocha.js` asserts `pending === 0` under `rust-strict`. CI push run 36839664376 green on every row. |
+| Pending list | none: `WAIT_ON_ENGINE=rust-strict npm run test:mocha` on the base commit with a host prebuild, 496 passing, 0 failing, 0 pending; `test/parser-properties.mocha.js` asserts `pending === 0` under `rust-strict`. CI push run 36839664376 green on every row on attempt 2. Attempt 1 failed the macOS `rust` row on a paused-clock test race, fixed in #90. |
 
 ## Supply-chain delta
 
