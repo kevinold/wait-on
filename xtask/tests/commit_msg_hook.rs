@@ -10,13 +10,25 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// `git hook run` exists from git 2.36; without it there is nothing to drive.
-fn git_hook_run_available() -> bool {
-    Command::new("git")
-        .args(["hook", "run", "--ignore-missing", "no-such-hook"])
+/// `git hook run` exists from git 2.36; without it there is nothing to drive. Probes with a
+/// real hook name `.githooks/` lacks, since newer git rejects unknown hook names.
+fn git_hook_run_unavailable() -> Option<String> {
+    let out = Command::new("git")
+        .args([
+            "-c",
+            "core.hooksPath=.githooks",
+            "hook",
+            "run",
+            "--ignore-missing",
+        ])
+        .arg("pre-applypatch")
         .current_dir(repo_root())
-        .output()
-        .is_ok_and(|out| out.status.success())
+        .output();
+    match out {
+        Ok(out) if out.status.success() => None,
+        Ok(out) => Some(String::from_utf8_lossy(&out.stderr).into_owned()),
+        Err(err) => Some(err.to_string()),
+    }
 }
 
 fn run_hook(name: &str, message: &str) -> Output {
@@ -148,13 +160,13 @@ fn cases() -> Vec<(&'static str, String, Vec<&'static str>)> {
 
 #[test]
 fn commit_msg_hook_reports_each_rule_and_accepts_conforming_messages() {
-    if !git_hook_run_available() {
+    if let Some(why) = git_hook_run_unavailable() {
         // CI runners have a current git, so a missing `git hook run` there is a broken runner.
         assert!(
             std::env::var_os("CI").is_none(),
-            "git lacks `git hook run` (needs git 2.36+) on CI"
+            "git hook run unavailable on CI (needs git 2.36+): {why}"
         );
-        eprintln!("skipping: git lacks `git hook run` (needs git 2.36+)");
+        eprintln!("skipping: git hook run unavailable (needs git 2.36+): {why}");
         return;
     }
     let mut failures = Vec::new();
