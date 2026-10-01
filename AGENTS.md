@@ -91,11 +91,43 @@ has syntax worth failing fast on.
 - CI runs on **ubuntu + windows** (matrix node 22/24/26, `npm ci --engine-strict`). No
   POSIX-only assumptions: mind Windows named pipes and path separators, and don't rely on
   unix-only tooling (e.g. `openssl speed`) or shell.
-- Conventional Commit messages (semantic-release + commitlint are proposed in #241).
+- Conventional Commit messages, checked locally by a hook and in CI by commitlint: see
+  [Commit messages](#commit-messages).
 - Keep `README.md` (and `bin/usage.txt`) in sync whenever options or CLI flags change.
 - `.npmignore` hygiene: exclude new top-level dev/tooling files from the published package.
 - CLI headers: `-H` / `--header "Name: value"` is repeatable and merges with config-file
   headers, CLI winning on conflict (#234).
+
+## Commit messages
+
+CI runs commitlint (`@commitlint/config-conventional`, `commitlint.config.js`) on every PR
+commit, and a failure blocks the PR. The tracked `.githooks/commit-msg` (POSIX sh, no
+dependencies) applies the same rules at commit time. Enable it once per clone with
+`cargo xtask hooks`, or with `git config core.hooksPath .githooks`. Never commit with `--no-verify`.
+
+- Header: `type(scope): subject`, optional `!` before the colon, at most 100 characters.
+- Type: one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`,
+  `chore`, `revert`, in lowercase.
+- Subject: not empty. Start it lowercase, and never with a lane ID, an issue number, or a proper
+  noun. Move that word into the scope or rephrase. No trailing period.
+- Leave a blank line after the header. Every body and footer line is at most 100 characters.
+  Long logs, errors, and URLs go in the PR body, not the commit.
+- Merging the spike branch into a parallel lane uses
+  `git merge -m "chore(merge): merge spike-next-rs into <branch>"`.
+- Git's own merge, revert, reapply, and `fixup!`/`squash!`/`amend!` headers are accepted as-is.
+
+| Rejected | Rule | Accepted |
+|---|---|---|
+| `docs(plans): L12 xtask + Justfile lane plan` | `subject-case` | `docs(plans): add L12 xtask lane plan` |
+| `feat(rust): Rust tcp check` | `subject-case` | `feat(rust): add tcp check` |
+| `feat(rust): verified TLS roots, client identity, explicit proxy and unix/pipe transport in the http checker (#57)` | `header-max-length` (113) | `feat(rust): add tls, proxy and unix transport to the http checker` |
+| a body line pasting a 140-character cargo error | `body-max-line-length` | a one-line summary, with the log in the PR body |
+
+Check a message before committing:
+`echo "$MSG" | npx -y -p @commitlint/cli@21.2.3 -p @commitlint/config-conventional@21.2.3 commitlint`.
+Lint a range the way CI does by adding `--from origin/spike-next-rs --to HEAD`. The hook is
+slightly stricter than CI. For example, it rejects any subject that starts with a non-ASCII
+character. It never accepts a message that CI rejects.
 
 ## Test-Driven Development (Mandatory)
 

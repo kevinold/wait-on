@@ -8,6 +8,7 @@
 4. Shrink the Rust pending list for anything the change makes pass on Rust; never grow it without a reason in the PR.
 5. `npm test` green; `ci:rs` green once it exists.
 6. Update the guides (checklist below) in the same PR.
+7. Commit messages follow [AGENTS.md › Commit messages](../../AGENTS.md#commit-messages); `cargo xtask hooks` enables the local check.
 
 ## Spine lanes vs operator PRs
 
