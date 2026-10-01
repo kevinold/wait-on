@@ -362,3 +362,8 @@ Four Node scripts (555 lines) plus a 423-line mocha file implement the Rust gate
   - R-L12-12: `package.json` `ci:rs` = `cargo xtask ci`, `build:napi` = `cargo xtask build-napi`, `ci:rs:package` = `cargo xtask package`, `bench:startup` = `cargo xtask bench-startup`. U6 tests assert these.
   - CI needs no new tool, so the operator-PR dependency (D1) is gone; R1 (package job relies on rustup auto-install) stays.
   - Known deviation from U3: no 30 s per-spawn kill in `bench-startup` (wait-on's own `-t 10000` bounds each run) — PR residual.
+- 2026-10-01 (post-merge, #80 → #81 → this PR): follow-ups after L12 merged.
+  - The 30 s per-spawn kill landed in #80's review fixes, and `ci:rs` became `cargo vet --locked && cargo xtask ci` (vet before cargo compiles xtask). R1 is cleared: the `package` job passed on the first push run.
+  - Windows-only failures the PR runs could not show. PR CI runs one representative row per job, so Windows `rust` first ran on push: (1) inner cargo relinking the running `xtask.exe` (fixed in #81 with `<target>/xtask-inner`); (2) `PATH` vs Windows `Path` env lookup, and (3) `startup-baseline.json` checked out as CRLF (fixed here with `host::env_get`/`env_set`/`env_remove` and a root `.gitattributes` `*.json text eol=lf`). Details: `docs/solutions/best-practices/cargo-xtask-alias-compiles-deps-before-the-vet-gate.md`.
+  - Local `npm run ci:rs` can fail with `EADDRINUSE ::1:3998` (and 3000/3001/3011) when sibling lane worktrees run mocha at the same time. It is not a lane defect; re-run or run the one file.
+  - Operator knowledge rule: anything saved to agent memory must also land in the repo, in `docs/solutions/` (via `/ce-compound mode:non-interactive`) or these Resume notes, in the same PR.

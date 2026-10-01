@@ -71,7 +71,7 @@ pub fn mocha_command(root: &Path) -> (PathBuf, Vec<String>, HashMap<String, Stri
         "test/**/*.mocha.js".to_string(),
     ];
     let mut env = host::env_map();
-    env.insert("WAIT_ON_ENGINE".to_string(), "rust-strict".to_string());
+    host::env_set(&mut env, "WAIT_ON_ENGINE", "rust-strict");
     (host::node_exe(), args, env)
 }
 
@@ -98,11 +98,14 @@ fn cargo_exe() -> PathBuf {
 /// The env for an inner cargo call: the parent env with `CARGO_TARGET_DIR` pointed at a
 /// directory of its own, so it can never relink the running xtask binary (Windows locks it).
 pub fn cargo_env(root: &Path, mut parent: HashMap<String, String>) -> HashMap<String, String> {
-    let outer = parent
-        .get("CARGO_TARGET_DIR")
+    let outer = host::env_get(&parent, "CARGO_TARGET_DIR")
         .map_or_else(|| root.join("target"), |dir| root.join(dir));
     let inner = outer.join("xtask-inner");
-    parent.insert("CARGO_TARGET_DIR".into(), inner.display().to_string());
+    host::env_set(
+        &mut parent,
+        "CARGO_TARGET_DIR",
+        &inner.display().to_string(),
+    );
     parent
 }
 
@@ -287,7 +290,10 @@ mod tests {
             env.get("WAIT_ON_ENGINE").map(String::as_str),
             Some("rust-strict")
         );
-        assert_eq!(env.get("PATH"), std::env::var("PATH").ok().as_ref());
+        assert_eq!(
+            host::env_get(&env, "PATH").map(String::from),
+            std::env::var("PATH").ok()
+        );
     }
 
     #[test]

@@ -1,0 +1,3 @@
+# JSON fixtures and baselines are compared byte for byte (xtask bench round-trip);
+# keep them LF on every checkout, including Windows autocrlf.
+*.json text eol=lf
