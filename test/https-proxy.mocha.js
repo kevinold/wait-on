@@ -47,7 +47,7 @@ function listenHttp(handler, cb) {
 }
 const httpTarget = (handler = (req, res) => res.end('ok')) => new Promise((resolve) => listenHttp(handler, resolve));
 
-// Under WAIT_ON_ENGINE=rust* each check loads the counting addon (delegating to the real
+// Under WAIT_ON_ENGINE=rust* each wait loads the counting addon (delegating to the real
 // prebuild), so a test proves which engine answered.
 const isRust = /^rust(-strict)?$/.test(process.env.WAIT_ON_ENGINE || '');
 const COUNTING_ADDON = path.join(__dirname, 'fixtures', 'counting-addon.js');
@@ -56,7 +56,7 @@ const PROXY_ENV = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO
 
 // 'resolved' or the rejection message, with the proxy env cleared except vars (set both
 // spellings unless case is the point: Windows env names are case-insensitive). Under
-// rust*, asserts the addon checked (routed) or was never constructed (routed: false).
+// rust*, asserts one wait ran in Rust (routed) or none did (routed: false: whole wait on JS).
 async function outcome(opts, { vars = {}, routed = true } = {}) {
   const env = {
     WAIT_ON_ENGINE: process.env.WAIT_ON_ENGINE,
@@ -67,8 +67,7 @@ async function outcome(opts, { vars = {}, routed = true } = {}) {
   if (counting) counting.reset();
   const r = await withEnv(env, () => waitOn({ ...FAST, ...opts }).then(() => 'resolved', (e) => e.message));
   if (counting) {
-    if (routed) expect(counting.calls.filter((c) => c.type === 'check')).to.have.length.of.at.least(1);
-    else expect(counting.calls.filter((c) => c.type === 'construct')).to.have.length(0);
+    expect(counting.calls.filter((c) => c.type === 'wait')).to.have.length(routed ? 1 : 0);
   }
   return r;
 }

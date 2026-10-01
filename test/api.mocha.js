@@ -1076,7 +1076,7 @@ describe('api', function () {
       return new Promise((resolve) => httpServer.listen(0, 'localhost', () => resolve(httpServer.address().port)));
     }
 
-    // 'resolved' or the rejection message; under rust*, also proves the addon checked.
+    // 'resolved' or the rejection message; under rust*, also proves one wait ran in Rust.
     async function outcome(opts) {
       const saved = process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
       if (isRust) process.env.WAIT_ON_NATIVE_LIBRARY_PATH = COUNTING_ADDON;
@@ -1086,7 +1086,7 @@ describe('api', function () {
       } finally {
         if (saved === undefined) delete process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
         else process.env.WAIT_ON_NATIVE_LIBRARY_PATH = saved;
-        if (isRust) expect(counting.calls.filter((c) => c.type === 'check')).to.have.length.of.at.least(1);
+        if (isRust) expect(counting.calls.filter((c) => c.type === 'wait')).to.have.length(1);
       }
     }
 

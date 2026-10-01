@@ -11,6 +11,7 @@ const http = require('http');
 const net = require('net');
 const os = require('os');
 const path = require('path');
+const util = require('util');
 const { describe, it, before, after, afterEach, beforeEach } = require('mocha');
 const { expect } = require('chai');
 
@@ -33,6 +34,19 @@ function runCLI(vars, resource = __filename) {
   return runCLIWith(vars, [resource, '-t', '1000', '-i', '100', '-w', '100']);
 }
 
+// Run fn with console.log captured (log/verbose output binds it when waitOn starts).
+async function captureLog(fn) {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => lines.push(util.format(...args));
+  try {
+    await fn();
+  } finally {
+    console.log = original;
+  }
+  return lines;
+}
+
 function callbackError(vars) {
   return withEnv(vars, () => new Promise((resolve) => waitOn(OPTS, resolve)));
 }
@@ -46,11 +60,14 @@ describe('engine selection', function () {
   this.timeout(5000);
   let junkDir;
   let junkAddon;
+  let noWaitAddon;
 
   before(function () {
     junkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-junk-'));
     junkAddon = path.join(junkDir, 'wait-on.node');
     fs.writeFileSync(junkAddon, 'not a native addon');
+    noWaitAddon = path.join(junkDir, 'no-wait.js'); // a stale addon: loads, but has no wait export
+    fs.writeFileSync(noWaitAddon, "module.exports = { version: () => 'stale' };");
   });
 
   after(function () {
@@ -99,6 +116,15 @@ describe('engine selection', function () {
       expect(rust.stderr).to.equal(js.stderr);
     });
 
+    it('should fall back to JS with a loadError naming wait when the addon has no wait export', async function () {
+      const vars = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: noWaitAddon };
+      await withEnv(vars, () => waitOn(OPTS));
+      const r = resolveEngine(vars);
+      expect(r.engine).to.equal('js');
+      expect(r.addon).to.equal(null);
+      expect(r.loadError.message).to.include('wait');
+    });
+
     it('should load a present addon under rust', function () {
       const r = resolveEngine({ WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON });
       expect(r.engine).to.equal('rust');
@@ -129,6 +155,18 @@ describe('engine selection', function () {
       await withEnv(vars, () => waitOn(OPTS)).catch((e) => (err = e));
       expect(err).to.be.an('error');
       expect(err.message).to.include(junkAddon);
+    });
+
+    it('should deliver an error naming the path and wait to the callback when the addon has no wait export', async function () {
+      const err = await callbackError({ WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: noWaitAddon });
+      expect(err).to.be.an('error');
+      expect(err.message).to.equal(`WAIT_ON_ENGINE=rust-strict: the native addon at ${noWaitAddon} has no wait export`);
+    });
+
+    it('should exit 1 from the CLI naming the path and wait when the addon has no wait export', function () {
+      const r = runCLI({ WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: noWaitAddon });
+      expect(r.code).to.equal(1);
+      expect(r.stderr).to.include(`WAIT_ON_ENGINE=rust-strict: the native addon at ${noWaitAddon} has no wait export`);
     });
 
     it('should exit 1 from the CLI naming the engine and path when the addon is missing', function () {
@@ -471,30 +509,29 @@ describe('engine selection', function () {
     const httpPort = async () => (await listen(http.createServer(handler), 0, 'localhost')).port;
     const httpsPort = async () => (await listen(https.createServer({ key, cert }, handler), 0, 'localhost')).port;
 
-    const constructs = () => counting.calls.filter((c) => c.type === 'construct');
-    const checks = () => counting.calls.filter((c) => c.type === 'check');
+    const waits = () => counting.calls.filter((c) => c.type === 'wait');
+    // the http options of every http resource in the recorded wait specs
+    const httpOpts = () => waits().flatMap((c) => c.spec.resources.filter((r) => r.kind === 'http').map((r) => r.http));
 
     // 'resolved' or the rejection message, so both engines' outcomes compare directly.
     function outcome(vars, opts) {
       return withEnv(vars, () => waitOn({ ...FAST, ...opts }).then(() => 'resolved', (e) => e.message));
     }
 
-    it('should construct one HEAD and one GET checker and check each when http resources run under rust', async function () {
+    it('should make one wait call carrying a HEAD and a GET http resource when http resources run under rust', async function () {
       const port = await httpPort();
       const resources = [`http://localhost:${port}/`, `http-get://localhost:${port}/`];
       expect(await outcome(RUST, { resources })).to.equal('resolved');
-      expect(constructs().map((c) => c.opts.method).sort()).to.deep.equal(['GET', 'HEAD']);
-      expect(checks().filter((c) => c.opts.method === 'HEAD')).to.have.length.of.at.least(1);
-      expect(checks().filter((c) => c.opts.method === 'GET')).to.have.length.of.at.least(1);
-      expect(counting.calls.filter((c) => c.type === 'cancel')).to.have.length(2);
+      expect(waits()).to.have.length(1);
+      expect(httpOpts().map((o) => o.method)).to.deep.equal(['HEAD', 'GET']);
     });
 
     it('should route a default https resource to the addon when strictSSL is unset', async function () {
       if (!cert) this.skip();
       const port = await httpsPort();
       expect(await outcome(RUST, { resources: [`https://localhost:${port}/`] })).to.equal('resolved');
-      expect(constructs()).to.have.length(1);
-      expect(constructs()[0].opts.url).to.equal(`https://localhost:${port}/`);
+      expect(httpOpts()).to.have.length(1);
+      expect(httpOpts()[0].url).to.equal(`https://localhost:${port}/`);
     });
 
     it('should pass string headers with auth folded in and a clamped timeoutMs when options are set', async function () {
@@ -507,7 +544,7 @@ describe('engine selection', function () {
         followRedirect: false
       };
       expect(await outcome(RUST, opts)).to.equal('resolved');
-      expect(constructs()[0].opts).to.deep.equal({
+      expect(httpOpts()[0]).to.deep.equal({
         url: `http://localhost:${port}/`,
         method: 'HEAD',
         headers: { 'X-Num': '42', authorization: 'Basic ' + Buffer.from('u:p').toString('base64') },
@@ -520,22 +557,30 @@ describe('engine selection', function () {
       const port = await httpPort();
       const resources = [`http://localhost:${port}/`];
       expect(await outcome(RUST, { resources, validateStatus: () => 1 })).to.equal('resolved');
-      expect(checks()[0].validateStatus(200)).to.equal(true);
+      expect(waits()[0].validateStatus(200)).to.equal(true);
       counting.reset();
       expect(await outcome(RUST, { resources, validateStatus: (s) => s === 200 })).to.equal('resolved');
-      expect(checks()[0].validateStatus(204)).to.equal(false);
+      expect(waits()[0].validateStatus(204)).to.equal(false);
       counting.reset();
       const thrower = () => {
         throw new Error('boom');
       };
       expect(await outcome(RUST, { resources, validateStatus: thrower, timeout: 300 })).to.match(/Timed out/);
-      expect(checks()[0].validateStatus(200)).to.equal(false);
+      expect(waits()[0].validateStatus(200)).to.equal(false);
     });
 
-    it('should deliver a checker construction error to the callback without throwing', async function () {
+    it('should deliver a rejected wait to the callback and log the non-timeout exit line', async function () {
       counting.constructError = new Error('client build failed');
-      const err = await withEnv(RUST, () => new Promise((resolve) => waitOn({ resources: ['http://localhost:1/'], ...FAST }, resolve)));
+      let err;
+      const lines = await captureLog(() =>
+        withEnv(RUST, () => new Promise((resolve) => waitOn({ resources: ['http://localhost:1/'], ...FAST, log: true }, resolve))).then(
+          (e) => (err = e)
+        )
+      );
       expect(err.message).to.equal('client build failed');
+      expect(waits()).to.have.length(1);
+      // util.format prints the Error with its stack after the message
+      expect(lines.some((l) => l.startsWith(`wait-on(${process.pid}) exiting with error Error: client build failed`))).to.equal(true);
     });
 
     describe('L5 cells route to the addon', function () {
@@ -543,8 +588,8 @@ describe('engine selection', function () {
       // both spellings: Windows env names are case-insensitive
       const DEAD_ENV = { HTTP_PROXY: dead, http_proxy: dead };
       const constructOpts = () => {
-        expect(constructs()).to.have.length(1);
-        return constructs()[0].opts;
+        expect(httpOpts()).to.have.length(1);
+        return httpOpts()[0];
       };
 
       it('should pass socketPath, a localhost url and no proxy when the resource is http://unix: and HTTP_PROXY is set', async function () {
@@ -649,7 +694,7 @@ describe('engine selection', function () {
       const js = await outcome({ WAIT_ON_ENGINE: 'js', ...NO_PROXY_ENV }, opts);
       expect(js).to.match(/Timed out/);
       expect(await outcome(RUST, opts)).to.equal(js);
-      expect(constructs()).to.have.length(0);
+      expect(waits()).to.have.length(0);
     });
 
     describe('routesHttpToRust', function () {
@@ -748,11 +793,11 @@ describe('engine selection', function () {
       expect(runExtraCa({ WAIT_ON_ENGINE: 'js' })).to.deep.equal(['resolved', '0']);
     });
 
-    it('should resolve under rust-strict with the addon checking', function () {
+    it('should resolve under rust-strict with one wait call to the addon', function () {
       if (!fs.existsSync(addonPath({}))) this.skip();
-      const [outcome, checks] = runExtraCa({ WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: COUNTING_ADDON });
+      const [outcome, waits] = runExtraCa({ WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: COUNTING_ADDON });
       expect(outcome).to.equal('resolved');
-      expect(Number(checks)).to.be.above(0);
+      expect(Number(waits)).to.equal(1);
     });
   });
 
@@ -778,113 +823,68 @@ describe('engine selection', function () {
     });
   });
 
-  describe('file: probe routing', function () {
-    // fake-addon.js answers a size JS cannot give for these paths (see its header)
+  // KTD6/KTD7: a loaded addon runs the whole wait in one wait call. fake-addon.js answers
+  // ready (or the Rust timeout result) and records the spec, so no build is needed.
+  describe('Rust shim (fake addon)', function () {
     const fake = require(FIXTURE_ADDON);
-    const missing = path.join(os.tmpdir(), `wait-on-no-such-file-${process.pid}`);
-    const rust = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
-    const fast = { timeout: 1000, interval: 100, window: 100 };
+    const STRICT = { WAIT_ON_ENGINE: 'rust-strict', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
+    const sock = path.join(os.tmpdir(), 'wait-on-fake.sock');
+    const resources = [__filename, 'tcp:127.0.0.1:1', `socket:${sock}`, 'http-get://localhost:1/x', 'command:exit 0'];
 
     beforeEach(function () {
       fake.calls.length = 0;
     });
 
-    for (const resource of [missing, `file:${missing}`]) {
-      it(`should succeed on a missing file under rust when the stub addon answers the probe (${resource === missing ? 'bare path' : 'file: prefix'})`, async function () {
-        await withEnv(rust, () => waitOn({ ...fast, resources: [resource] }));
-        expect(fake.calls).to.include(missing);
-      });
-    }
-
-    it('should exit 0 from the CLI on a missing file under rust with the stub addon, and 1 under js', function () {
-      expect(runCLI(rust, missing).code).to.equal(0);
-      const js = runCLI({ ...rust, WAIT_ON_ENGINE: 'js' }, missing);
-      expect(js.code).to.equal(1);
-      expect(js.stderr).to.include('Timed out');
+    it('should make one wait call with a spec for a file, tcp, socket, http and command resource', async function () {
+      const opts = { resources, delay: 5, interval: 100, window: 5e9, timeout: 3e9, simultaneous: 5e9, verbose: true };
+      await captureLog(() => withEnv(STRICT, () => waitOn(opts)));
+      expect(fake.calls).to.deep.equal([
+        {
+          delayMs: 5,
+          intervalMs: 100,
+          windowMs: 2 ** 32 - 1,
+          tcpTimeoutMs: 300,
+          commandTimeoutMs: 0,
+          simultaneous: 2 ** 32 - 1,
+          timeoutMs: 1,
+          reverse: false,
+          verbose: true,
+          resources: [
+            { name: __filename, kind: 'file', path: __filename },
+            { name: 'tcp:127.0.0.1:1', kind: 'tcp', path: '127.0.0.1:1', host: '127.0.0.1', port: 1 },
+            { name: `socket:${sock}`, kind: 'socket', path: sock },
+            {
+              name: 'http-get://localhost:1/x',
+              kind: 'http',
+              http: { url: 'http://localhost:1/x', method: 'GET', headers: {}, followRedirect: true }
+            },
+            { name: 'command:exit 0', kind: 'command', command: 'exit 0' }
+          ]
+        }
+      ]);
     });
 
-    it('should never call the stub and time out on a missing file under js', async function () {
+    it('should reject with the Rust timeout message when the addon answers timed out', async function () {
       let err;
-      await withEnv({ ...rust, WAIT_ON_ENGINE: 'js' }, () => waitOn({ ...fast, timeout: 300, resources: [missing] })).catch(
-        (e) => (err = e)
-      );
-      expect(err.message).to.match(/^Timed out waiting for/);
-      expect(fake.calls).to.have.length(0);
+      await withEnv({ ...STRICT, WAIT_ON_FAKE_ADDON_ANSWER: 'timeout' }, () => waitOn({ resources })).catch((e) => (err = e));
+      expect(err.message).to.equal(`Timed out waiting for: ${resources.join(', ')}`);
+      expect(fake.calls).to.have.length(1);
+      expect(fake.calls[0]).to.not.have.any.keys('timeoutMs', 'simultaneous');
     });
 
-    it('should succeed in reverse mode on an existing file when the stub reports -1 under rust', async function () {
-      await withEnv({ ...rust, WAIT_ON_FAKE_FILE_SIZE: '-1' }, () =>
-        waitOn({ ...fast, reverse: true, resources: [__filename] })
-      );
-      expect(fake.calls).to.include(__filename);
-    });
-  });
-
-  describe('command: check routing', function () {
-    // fake-addon.js answers ok:true (or ok:false with WAIT_ON_FAKE_COMMAND_OK=0) without
-    // spawning, so outcomes below are ones JS cannot produce for these commands
-    const fake = require(FIXTURE_ADDON);
-    const failing = 'node -e "process.exit(1)"';
-    const passing = 'node -e "process.exit(0)"';
-    const rust = { WAIT_ON_ENGINE: 'rust', WAIT_ON_NATIVE_LIBRARY_PATH: FIXTURE_ADDON };
-    const fast = { timeout: 1000, interval: 100 };
-
-    beforeEach(function () {
-      fake.calls.length = 0;
-    });
-
-    // Run fn with console.log captured (verbose output binds it when waitOn starts).
-    async function captureLog(fn) {
-      const lines = [];
-      const original = console.log;
-      console.log = (...args) => lines.push(args.join(' '));
+    it('should exit 1 from the CLI with the timeout message and record one wait call', function () {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-fake-log-'));
       try {
-        await fn();
+        const log = path.join(dir, 'calls.jsonl');
+        const r = runCLIWith({ ...STRICT, WAIT_ON_FAKE_ADDON_ANSWER: 'timeout', WAIT_ON_FAKE_ADDON_LOG: log }, ['tcp:127.0.0.1:1']);
+        expect(r.code).to.equal(1);
+        expect(r.stderr).to.include('Timed out waiting for: tcp:127.0.0.1:1');
+        const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+        expect(lines).to.have.length(1);
+        expect(JSON.parse(lines[0]).resources[0]).to.include({ kind: 'tcp', port: 1 });
       } finally {
-        console.log = original;
+        fs.rmSync(dir, { recursive: true, force: true });
       }
-      return lines;
-    }
-
-    it('should succeed on a failing command under rust when the stub addon answers the check', async function () {
-      await withEnv(rust, () => waitOn({ ...fast, commandTimeout: 200, resources: [`command:${failing}`] }));
-      expect(fake.calls).to.deep.include({ command: failing, timeoutMs: 200 });
-    });
-
-    it('should exit 0 from the CLI on a failing command under rust with the stub addon, and 1 under js', function () {
-      expect(runCLI(rust, `command:${failing}`).code).to.equal(0);
-      const js = runCLI({ ...rust, WAIT_ON_ENGINE: 'js' }, `command:${failing}`);
-      expect(js.code).to.equal(1);
-      expect(js.stderr).to.include('Timed out');
-    });
-
-    it('should keep the verbose success and error line shapes under rust', async function () {
-      const ok = await captureLog(() =>
-        withEnv(rust, () => waitOn({ ...fast, verbose: true, resources: [`command:${failing}`] }))
-      );
-      expect(ok.some((l) => l.startsWith(`  Command "${failing}" success. stdout: "fake"`))).to.equal(true);
-      const failed = await captureLog(() =>
-        withEnv({ ...rust, WAIT_ON_FAKE_COMMAND_OK: '0' }, () =>
-          waitOn({ ...fast, verbose: true, reverse: true, resources: [`command:${passing}`] })
-        )
-      );
-      expect(failed.some((l) => l.startsWith('  Command error: "fake"'))).to.equal(true);
-    });
-
-    it('should succeed in reverse mode on a passing command when the stub reports not-ready under rust', async function () {
-      await withEnv({ ...rust, WAIT_ON_FAKE_COMMAND_OK: '0' }, () =>
-        waitOn({ ...fast, reverse: true, resources: [`command:${passing}`] })
-      );
-      expect(fake.calls).to.deep.include({ command: passing, timeoutMs: 0 });
-    });
-
-    it('should never call the stub and time out on a failing command under js', async function () {
-      let err;
-      await withEnv({ ...rust, WAIT_ON_ENGINE: 'js' }, () =>
-        waitOn({ ...fast, timeout: 300, resources: [`command:${failing}`] })
-      ).catch((e) => (err = e));
-      expect(err.message).to.match(/^Timed out waiting for/);
-      expect(fake.calls).to.have.length(0);
     });
   });
 
@@ -896,8 +896,8 @@ describe('engine selection', function () {
       "const loaded = () => { const keys = Object.keys(require.cache).map((k) => k.split(require('path').sep).join('/'));" +
       " return { rxjs: keys.some((k) => k.includes('node_modules/rxjs/')), undici: keys.some((k) => k.includes('node_modules/undici/')) }; };";
 
-    function runGraph(program) {
-      const env = { ...process.env, WAIT_ON_ENGINE: 'js' };
+    function runGraph(program, engine = 'js') {
+      const env = { ...process.env, WAIT_ON_ENGINE: engine };
       delete env.WAIT_ON_NATIVE_LIBRARY_PATH;
       const r = childProcess.spawnSync(process.execPath, ['-e', LOADED + program], { cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 8000 });
       expect(r.status, r.stderr).to.equal(0);
@@ -911,6 +911,12 @@ describe('engine selection', function () {
     it('should load both once a JS-engine wait runs', function () {
       const program = `require('./lib/wait-on')({ resources: [${JSON.stringify(__filename)}], window: 0, interval: 10 }).then(() => console.log(JSON.stringify(loaded())));`;
       expect(runGraph(program)).to.deep.equal({ rxjs: true, undici: true });
+    });
+
+    it('should load neither once a Rust-engine wait runs', function () {
+      if (!fs.existsSync(addonPath({}))) this.skip();
+      const program = `require('./lib/wait-on')({ resources: [${JSON.stringify(__filename)}], window: 0, interval: 10 }).then(() => console.log(JSON.stringify(loaded())));`;
+      expect(runGraph(program, 'rust-strict')).to.deep.equal({ rxjs: false, undici: false });
     });
   });
 

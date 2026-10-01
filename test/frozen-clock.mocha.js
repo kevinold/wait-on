@@ -16,6 +16,7 @@ const os = require('os');
 
 const waitOn = require('../');
 const { FROZEN_NOW, itFrozen } = require('./frozen-clock');
+const { withEnv } = require('./helpers/engine-env');
 
 describe('frozen-clock helper (#243)', function () {
   itFrozen('freezes Date at FROZEN_NOW inside a frozen test', function () {
@@ -36,13 +37,15 @@ describe('frozen-clock helper (#243)', function () {
     // event-loop turns. Measure REAL elapsed via hrtime (not faked by the clock).
     const missing = path.join(os.tmpdir(), 'frozen-clock-never-exists-a1b2c3');
     const startReal = process.hrtime.bigint();
-    waitOn({ resources: [missing], timeout: 5000, interval: 250, window: 500 }, function (err) {
+    // KTD8: pinned to the JS engine, the AGENTS.md carve-out for tests of the freezing
+    // mechanism itself; a Rust timer runs in real time and cannot be virtualized.
+    withEnv({ WAIT_ON_ENGINE: 'js' }, () => waitOn({ resources: [missing], timeout: 5000, interval: 250, window: 500 }, function (err) {
       const realMs = Number(process.hrtime.bigint() - startReal) / 1e6;
       expect(err).to.be.ok; // timed out (virtually)
       expect(err.message).to.match(/Timed out/);
       expect(realMs).to.be.lessThan(2000); // nowhere near the 5000ms of virtual time
       done();
-    });
+    }));
   });
 
   it('restores the real Date after a frozen test', function () {
