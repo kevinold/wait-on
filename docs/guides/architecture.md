@@ -24,11 +24,11 @@ All engine code is one file, [`lib/wait-on.js`](../../lib/wait-on.js). Runtime d
 
 ## Rust engine layout
 
-Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy and `supply-chain/` the `cargo vet` store ([Supply chain](#supply-chain)).
+Cargo workspace at repo root (`Cargo.toml`, committed `Cargo.lock`), `crates/wait-on-core` (pure Rust engine, no napi), `crates/wait-on-napi` (napi-rs `cdylib` binding), `xtask/` (the `cargo xtask` dev tooling, never shipped). The npm package stays in `lib/` and `bin/`. One version for both crates lives in `[workspace.package]`; `rust-toolchain.toml` pins the toolchain and the workspace `rust-version` (MSRV) equals it. `deny.toml` is the `cargo deny` policy and `supply-chain/` the `cargo vet` store ([Supply chain](#supply-chain)).
 
 ## Supply chain
 
-Two gates run on every `npm run ci:rs` (R23). `cargo deny check` (`deny.toml`) gates advisories, licenses, bans and sources. `cargo vet --locked` (`supply-chain/`) runs first and fails on any third-party crate version in `Cargo.lock` that no imported audit, local audit (`audits.toml`) or exemption (`config.toml`) covers, so a new or bumped crate cannot reach the addon unreviewed. `imports.lock` pins the imported audits, and `--locked` never fetches new ones. Workspace members (`wait-on-core`, `wait-on-napi`) are not vetted.
+Two gates run on every `npm run ci:rs` (R23). `cargo deny check` (`deny.toml`) gates advisories, licenses, bans and sources. `cargo vet --locked` (`supply-chain/`) runs first and fails on any third-party crate version in `Cargo.lock` that no imported audit, local audit (`audits.toml`) or exemption (`config.toml`) covers, so a new or bumped crate cannot reach the addon unreviewed. `imports.lock` pins the imported audits, and `--locked` never fetches new ones. Workspace members (`wait-on-core`, `wait-on-napi`, `xtask`) are not vetted.
 
 Trust sources (`[imports]` in `supply-chain/config.toml`): Mozilla, Google, Bytecode Alliance and ZcashFoundation are the required baseline. ZcashFoundation is a URL import of zebra's `audits.toml` because it is not in the cargo-vet registry, and it covers none of today's crates (its section in `imports.lock` is empty). ISRG, Embark Studios and Zcash (ECC) are added on top, each kept because it removed at least one exemption.
 
