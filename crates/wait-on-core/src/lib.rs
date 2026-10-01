@@ -65,7 +65,8 @@ fn shell(command: &str) -> Command {
 #[cfg(windows)]
 fn shell(command: &str) -> Command {
     use std::os::windows::process::CommandExt;
-    let comspec = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
+    // Eager default: ComSpec is always set on CI, so a closure here would be an unrun region.
+    let comspec = std::env::var_os("ComSpec").unwrap_or("cmd.exe".into());
     let mut cmd = Command::new(comspec);
     cmd.args(["/d", "/s", "/c"])
         .raw_arg(format!("\"{command}\""));
