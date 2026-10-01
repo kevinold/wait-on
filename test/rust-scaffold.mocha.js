@@ -19,4 +19,10 @@ describe('rust scaffold', function () {
     expect(msrv && msrv[1]).to.equal(channel[1]);
     expect(fs.existsSync(path.join(root, 'Cargo.lock'))).to.equal(true);
   });
+
+  it('registers the xtask crate and the cargo xtask alias', function () {
+    expect(read('Cargo.toml')).to.match(/members\s*=\s*\[[^\]]*"xtask"/);
+    expect(read('.cargo/config.toml')).to.match(/^\s*xtask\s*=\s*"run --package xtask --"/m);
+    expect(read('xtask/Cargo.toml')).to.match(/^\s*publish\.workspace\s*=\s*true/m);
+  });
 });
