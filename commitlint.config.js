@@ -11,7 +11,7 @@ const inFlightSubjects = [
   'Support Windows named pipe paths in http://unix: resources and run tests on Windows', // b594acb
 ];
 
-// #82: five commits already on the protected spike-next-rs fail the rules, so spike PR #51
+// #82: six commits already on the protected spike-next-rs fail the rules, so spike PR #51
 // (next..spike-next-rs) cannot go green by rewriting them. Match each exact full message, never a
 // header alone, so a new commit reusing one of these headers is still linted. REMOVE this block
 // (and this comment) once spike-next-rs merges into next.
@@ -27,6 +27,11 @@ const pushedSpikeMessages = [
     'Run cargo vet before cargo builds xtask (ci:rs alias), restore the 30s per-spawn kill in ' +
     'bench-startup, share one exit-code wrapper and a lossy env snapshot, and refresh the vet ' +
     'baseline counts in the guides.',
+  // 920b038
+  'fix(xtask): look up env vars case-insensitively on windows (#75)\n\n' +
+    'Windows names PATH as Path, so exact HashMap lookups missed it. ' +
+    'host::env_get/env_set/env_remove fold key case on Windows only; cargo_env, the mocha step ' +
+    'and the package install cells use them.',
   'docs(plans): L12 xtask + Justfile lane plan', // 9347b8b
   'feat(rust): verified TLS roots, client identity, explicit proxy and unix/pipe transport in the http checker (#57)', // b171574
   'docs(plans): L6 command implementation plan (#58)', // 3688229
@@ -36,6 +41,6 @@ module.exports = {
   extends: ['@commitlint/config-conventional'],
   ignores: [
     (message) => inFlightSubjects.includes(message.split('\n')[0].trim()),
-    (message) => pushedSpikeMessages.includes(message.trim()),
+    (message) => pushedSpikeMessages.includes(message.trimEnd()),
   ],
 };
