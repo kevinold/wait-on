@@ -68,7 +68,7 @@ In-scope files: `benchmarks/http-ffi.js`, `benchmarks/startup-baseline.json`,
 
 | File | Verdict | Uncovered assertion (example; no Rust test asserts it) |
 |---|---|---|
-| `test/rust-scaffold.mocha.js` | keep | "pins the same Rust version in rust-toolchain.toml and the workspace rust-version": no Rust test reads `rust-toolchain.toml`, `.cargo/config.toml` or the `package.json` `ci:rs`/`build:napi`/`ci:rs:package`/`bench:startup`/`lint` strings; same for `llvm-tools-preview`, the `xtask` alias and the `scripts/` contents |
+| `test/rust-scaffold.mocha.js` | delete (operator) | the toolchain pin (channel equals workspace `rust-version`) moves to `xtask/tests/toolchain_pin.rs`; the rest restate config, not behaviour, and are dropped by operator decision: `package.json` script strings, the `.cargo` alias, `scripts/` contents, `llvm-tools-preview` |
 | `test/benchmarks.mocha.js` | keep | "should summarize samples as median and p95" and the `js`/`rust-strict` smoke runs: they exercise `benchmarks/http-ffi.js`; `xtask/src/bench.rs` tests only the startup benchmark's `median` (no p95) and never runs `http-ffi.js` |
 | `test/prebuild-probe.mocha.js` | keep | "should print the loaded addon path and pass API and CLI checks against the host prebuild" (and the timeout and missing-addon cases): `xtask/src/package.rs` tests check container cell arguments and the docker context copy of the probe, but never execute it |
 | `test/engine.mocha.js` | keep | "should fall back to JS silently when the addon is missing", "should reject naming the value and the allowed values", "should load neither rxjs nor undici on a bare require": engine selection, load errors and the module graph live in `lib/engine.js` / `lib/wait-on.js`; no Rust test can observe them |
@@ -80,9 +80,8 @@ In-scope files: `benchmarks/http-ffi.js`, `benchmarks/startup-baseline.json`,
 | `test/helpers/stub-proxy.js` | keep | used by `https-proxy`, `cli` mocha files |
 | `test/helpers/tls-fixture.js` | keep | used by `engine`, `https-proxy` mocha files and `extra-ca-api.js` |
 
-Outcome: no file is deletable under R-L14-2. The lane changes only docs: this plan and a
-`docs/guides/testing.md` note recording the audit. No code, test or config change, so the TDD cycle
-has nothing to run; the gates (R-L14-3) are unchanged by construction and CI confirms them.
+Outcome: `test/rust-scaffold.mocha.js` is deleted (operator decision, see Resume notes); every other
+file stays. The one added Rust test was red-proven by a temporary `Cargo.toml` `rust-version` edit.
 
 ---
 
@@ -93,3 +92,7 @@ has nothing to run; the gates (R-L14-3) are unchanged by construction and CI con
 - 2026-10-01: audit done at `832c588` (table above). Rust-side search: `xtask/src/*.rs`,
   `xtask/tests/*.rs`, `crates/*/src`, `crates/*/tests` for the files and strings each JS assertion
   reads. Nothing deleted.
+- 2026-10-01 (PR #92 follow-up, operator): `test/rust-scaffold.mocha.js` is spike scaffolding.
+  Its config-restating assertions are dropped; only the toolchain pin is kept, as
+  `xtask/tests/toolchain_pin.rs` (line scan, no new crate). Red-proven by setting `Cargo.toml`
+  `rust-version` to `1.98.0` (editing `rust-toolchain.toml` would switch the toolchain).
