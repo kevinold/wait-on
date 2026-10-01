@@ -79,6 +79,7 @@ npm run ci:rs; echo $?
 - Node's `execFile` `timeout` has no Rust std equivalent. `output_within` in `xtask/src/host.rs` spawns the child, polls `try_wait` against a deadline, kills it when the deadline passes, and drains stderr on a thread so a chatty child cannot block on a full pipe.
 - On Windows, Rust `canonicalize` returns `\\?\C:\...` verbatim paths and Node's `realpath` does not. `strip_verbatim` in `xtask/src/package.rs` strips any `\\?\` prefix. It assumes drive paths, so `\\?\UNC\...` shares are not handled.
 - Any cargo call xtask spawns into the same target dir can try to relink the running `target\debug\xtask.exe`. Windows locks a running exe, so `cargo test --workspace` inside `cargo xtask ci` failed on the first post-merge run (`failed to remove file ...\xtask.exe ... Access is denied (os error 5)`); macOS and Linux never show it. `ci::cargo_env` in `xtask/src/ci.rs` points every inner cargo call at `<target>/xtask-inner`. A separate target dir keeps xtask's own tests and clippy in the gate, which `--exclude xtask` would drop.
+- Two more checks only failed on the Windows runner. Windows env names are case-insensitive and the runner names it `Path`, so an exact `HashMap` lookup of `PATH` misses; `host::env_get`/`env_set`/`env_remove` fold case on Windows only. With git's `autocrlf`, `benchmarks/startup-baseline.json` checks out as CRLF and the byte-identical round-trip fails; the root `.gitattributes` pins `*.json` to `eol=lf` rather than loosening the test.
 
 ## Related
 
