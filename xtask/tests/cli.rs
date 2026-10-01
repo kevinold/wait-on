@@ -7,13 +7,40 @@ fn xtask(args: &[&str]) -> Output {
         .expect("spawn xtask")
 }
 
+const SUBCOMMANDS: [&str; 8] = [
+    "ci",
+    "fmt",
+    "lint",
+    "test",
+    "cov",
+    "build-napi",
+    "package",
+    "bench-startup",
+];
+
+fn assert_lists_every_subcommand(text: &str) {
+    for name in SUBCOMMANDS {
+        assert!(
+            text.lines()
+                .any(|l| l.split_whitespace().next() == Some(name)),
+            "usage should list {name} on its own line: {text}"
+        );
+    }
+}
+
 #[test]
 fn no_subcommand_prints_usage_and_exits_2() {
     let out = xtask(&[]);
     assert_eq!(out.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    for name in ["build-napi", "package", "bench-startup"] {
-        assert!(stderr.contains(name), "usage should name {name}: {stderr}");
+    assert_lists_every_subcommand(&String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn help_lists_every_subcommand_and_exits_0() {
+    for flag in ["--help", "-h", "help"] {
+        let out = xtask(&[flag]);
+        assert_eq!(out.status.code(), Some(0), "{flag}");
+        assert_lists_every_subcommand(&String::from_utf8_lossy(&out.stdout));
     }
 }
 
@@ -38,7 +65,9 @@ fn build_napi_rejects_an_unknown_target_before_spawning_napi() {
 fn unknown_subcommand_is_named_and_exits_2() {
     let out = xtask(&["frobnicate"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("frobnicate"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("frobnicate"));
+    assert_lists_every_subcommand(&stderr);
 }
 
 #[test]
