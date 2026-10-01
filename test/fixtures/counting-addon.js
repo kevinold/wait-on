@@ -1,6 +1,7 @@
 'use strict';
 
-// Counting addon (KTD7): load via WAIT_ON_NATIVE_LIBRARY_PATH to prove a wait ran in Rust.
+// Counting addon (KTD7; L13 KD3: the only addon stand-in, kept as the routing spy):
+// load via WAIT_ON_NATIVE_LIBRARY_PATH to prove a wait ran in Rust.
 // Records every wait call as { type: 'wait', spec, validateStatus } and delegates to the
 // real host prebuild when it exists; otherwise answers canned: ready unless
 // validateStatus(200) is false for an http resource, then the Rust timeout result.
