@@ -1,0 +1,2 @@
+# cargo vet --locked rejects CRLF, so keep the store LF on Windows checkouts too.
+* text eol=lf
