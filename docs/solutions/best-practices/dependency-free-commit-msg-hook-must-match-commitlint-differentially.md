@@ -36,7 +36,7 @@ The hook reimplements commitlint's rules, so it can drift from commitlint. The i
 
 6. **Drive the hook through git in tests.** `xtask/tests/commit_msg_hook.rs` runs a table of messages with `git -c core.hooksPath=.githooks hook run commit-msg -- <absolute temp file>` from the repo root, so on Windows git runs the hook with its own bundled sh. The message path is absolute because git runs the hook from the worktree root. The test skips when `git hook run --ignore-missing no-such-hook` fails (git < 2.36). Each case asserts either exit 1 with the named rules, or exit 0 with empty stderr. The PR CI rust job runs on ubuntu only. The Windows and macOS runs happen on the post-merge push to `spike-next-rs`.
 
-7. **Ignore already-pushed bad commits by their exact full message, not their header.** Five failing commits are already on the protected `spike-next-rs` branch and cannot be rewritten. `commitlint.config.js` matches each full message, so a new commit that reuses a generic header such as `fix(review): apply review findings` is still linted. The block is marked for removal once the branch merges.
+7. **Ignore already-pushed bad commits by their exact full message, not their header.** Failing commits already on the protected `spike-next-rs` branch cannot be rewritten. `commitlint.config.js` matches each full message, without trimming leading whitespace, so a new commit that reuses a generic header such as `fix(review): apply review findings` is still linted. The block is marked for removal once the branch merges. Other lanes keep landing commits there: one more failing commit arrived while #88 was open. Re-run the `origin/next..origin/spike-next-rs` range lint right before merging.
 
 ## Why This Matters
 
