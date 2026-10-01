@@ -14,9 +14,9 @@ function fail(msg, rule) { printf "commit-msg: %s [%s]\n", msg, rule; bad = 1 }
 { line[++n] = $0 }
 
 END {
-  # Header: first line that is neither blank nor a git comment.
+  # Header: first non-blank line, # lines included: -m/-F keep them and CI lints what is kept.
   h = 1
-  while (h <= n && (line[h] ~ /^[ \t]*$/ || line[h] ~ /^#/)) h++
+  while (h <= n && line[h] ~ /^[ \t]*$/) h++
   while (n > h && line[n] ~ /^[ \t]*$/) n--
   header = (h <= n) ? line[h] : ""
 

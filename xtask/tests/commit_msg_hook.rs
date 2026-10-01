@@ -48,7 +48,6 @@ fn long(prefix: &str, len: usize) -> String {
 
 /// (case name, message, rules that must be reported; empty = accepted).
 fn cases() -> Vec<(&'static str, String, Vec<&'static str>)> {
-    let review_body = long("Run cargo vet before cargo builds xtask ", 208);
     vec![
         // Real failures from #82 and the spike range.
         (
@@ -78,13 +77,22 @@ fn cases() -> Vec<(&'static str, String, Vec<&'static str>)> {
         ),
         (
             "review-body-208",
-            format!("fix(review): apply review findings\n\n{review_body}\n"),
+            format!(
+                "fix(review): apply review findings\n\n{}\n",
+                long("Run cargo vet before cargo builds xtask ", 208)
+            ),
             vec!["body-max-line-length"],
         ),
         (
             "hash-led-body-line",
             format!("fix(x): y\n\n{}\n", long("#82 ", 114)),
             vec!["body-max-line-length"],
+        ),
+        // -m keeps # lines, and CI takes the first line as the header.
+        (
+            "hash-led-header",
+            "#123 thing\nfix: x\n".into(),
+            vec!["type-empty"],
         ),
         // One row per rule.
         ("non-ascii-capital", "fix: Éclair\n".into(), vec!["subject-case"]),
