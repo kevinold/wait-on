@@ -1,5 +1,5 @@
 //! The polling loop: one wait over every resource with the JS engine's schedule,
-//! stabilization, concurrency, timeout, reverse and log text (`lib/wait-on.js`).
+//! stabilization, concurrency, timeout, reverse and log text (`lib/engine-js.js`).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -136,7 +136,12 @@ where
     // Node floors timers at 1 ms, and the JS timeout timer is subscribed first: it wins ties.
     let first = start + spec.delay.max(MIN);
     let timed_out = |ready: &[bool]| format!("Timed out waiting for: {}", remaining(&names, ready));
-    if spec.timeout.is_some_and(|t| start + t <= first) {
+    if let Some(deadline) = spec
+        .timeout
+        .map(|t| start + t.max(MIN))
+        .filter(|d| *d <= first)
+    {
+        sleep_until(deadline).await;
         return Err(timed_out(&ready));
     }
     let schedule = Schedule {
@@ -228,6 +233,14 @@ where
     let mut inflight = JoinSet::new();
     let mut queued = 0usize;
     let mut next = s.first;
+    let start = |set: &mut JoinSet<_>| {
+        set.spawn(check(
+            Arc::clone(&probe),
+            s,
+            Arc::clone(&sink),
+            validate.clone(),
+        ));
+    };
     let path = if let Probe::File(p) = &*probe {
         p.as_str()
     } else {
@@ -277,12 +290,7 @@ where
                 }
                 if queued > 0 {
                     queued -= 1;
-                    inflight.spawn(check(
-                        Arc::clone(&probe),
-                        s,
-                        Arc::clone(&sink),
-                        validate.clone(),
-                    ));
+                    start(&mut inflight);
                 }
                 continue;
             }
@@ -291,19 +299,14 @@ where
         }
         next = Instant::now() + s.period;
         if inflight.len() < limit {
-            inflight.spawn(check(
-                Arc::clone(&probe),
-                s,
-                Arc::clone(&sink),
-                validate.clone(),
-            ));
+            start(&mut inflight);
         } else if queue {
             queued += 1;
         }
     }
 }
 
-/// One check with its verbose lines (`lib/wait-on.js` text); verdicts are reverse-negated.
+/// One check with its verbose lines (`lib/engine-js.js` text); verdicts are reverse-negated.
 async fn check<V, Fut, E>(
     probe: Arc<Probe>,
     s: Schedule,

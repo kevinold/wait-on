@@ -190,13 +190,16 @@ async fn missing_file_without_verbose_logs_only_the_waiting_line() {
 #[tokio::test(start_paused = true)]
 async fn timeout_at_or_before_the_first_tick_times_out_before_any_check() {
     let f = TempFile::new("early-timeout", 1);
-    for (delay, timeout) in [(0, 0), (0, 1), (50, 50)] {
+    for (delay, timeout) in [(0, 0), (0, 1), (50, 50), (300, 150)] {
         let (sink, lines) = recorder(true);
         let mut s = spec(vec![file(&f.0)]);
         s.delay = delay * MS;
         s.timeout = Some(timeout * MS);
+        let started = Instant::now();
         let out = wait(s, sink, NONE).await;
         assert_eq!(out, Err(format!("Timed out waiting for: {}", f.0)));
+        // rejects at the deadline (Node floors timers at 1 ms), not as soon as it is known
+        assert_eq!(started.elapsed(), (timeout * MS).max(MS));
         assert_eq!(
             text(&lines),
             vec![format!("waiting for 1 resources: {}", f.0)]

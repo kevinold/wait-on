@@ -34,13 +34,13 @@ pub fn version() -> &'static str {
 }
 
 /// Size of the file at `path` via a symlink-following stat, or -1 on any error, like
-/// `getFileSize` in lib/wait-on.js. Reverse mode and Windows delete-pending rely on -1.
+/// `getFileSize` in lib/engine-js.js. Reverse mode and Windows delete-pending rely on -1.
 pub fn file_size(path: &str) -> i64 {
     std::fs::metadata(path).map_or(-1, |m| m.len() as i64)
 }
 
 /// One `command:` attempt: `ok` is exit 0, `stdout` feeds the verbose success line and
-/// `error` the failure line, like `commandPasses` in lib/wait-on.js.
+/// `error` the failure line, like `commandPasses` in lib/engine-js.js.
 #[derive(Debug, Default)]
 pub struct CommandResult {
     pub ok: bool,

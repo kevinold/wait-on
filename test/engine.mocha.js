@@ -894,6 +894,19 @@ describe('engine selection', function () {
       fake.calls.length = 0;
     });
 
+    it('should map overflowing timer options the way Node does (1 ms; a socket timeout truncates)', async function () {
+      const opts = { resources: [__filename], delay: 3e9, interval: 3e9, tcpTimeout: 3e9, commandTimeout: 3e9 };
+      await withEnv(STRICT, () => waitOn(opts));
+      expect(fake.calls).to.have.lengthOf(1);
+      const { delayMs, intervalMs, tcpTimeoutMs, commandTimeoutMs } = fake.calls[0];
+      expect({ delayMs, intervalMs, tcpTimeoutMs, commandTimeoutMs }).to.deep.equal({
+        delayMs: 1,
+        intervalMs: 1,
+        tcpTimeoutMs: 2 ** 31 - 1,
+        commandTimeoutMs: 1
+      });
+    });
+
     it('should make one wait call with a spec for a file, tcp, socket, http and command resource', async function () {
       const opts = { resources, delay: 5, interval: 100, window: 5e9, timeout: 3e9, simultaneous: 5e9, verbose: true };
       await captureLog(() => withEnv(STRICT, () => waitOn(opts)));

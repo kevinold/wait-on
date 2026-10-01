@@ -1240,6 +1240,13 @@ describe('api', function () {
       expect(elapsedSince(start)).to.be.below(1000);
     });
 
+    it('should time out at the deadline, not sooner, when timeout falls before the first check', async function () {
+      const file = tempFile('x');
+      const start = performance.now();
+      expect(await outcome({ resources: [file], delay: 3000, timeout: 600 })).to.equal(`Timed out waiting for: ${file}`);
+      expect(elapsedSince(start)).to.be.within(550, 2500);
+    });
+
     it('should succeed on a ready file when simultaneous exceeds u32 (5e9)', async function () {
       expect(await outcome({ resources: [tempFile('x')], simultaneous: 5e9, interval: 50, timeout: 2000 })).to.equal('resolved');
     });
