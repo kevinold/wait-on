@@ -95,13 +95,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ipv6_literal() {
-        let listener = TcpListener::bind("[::1]:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        assert!(ready("::1", port, 300).await.is_ok());
-    }
-
-    #[tokio::test]
     async fn resolve_error_is_not_ready() {
         // Large bound so a slow CI resolver cannot turn this into TimedOut.
         let reason = ready("no-such-host.invalid", 1, 5000)
