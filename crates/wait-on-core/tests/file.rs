@@ -109,8 +109,10 @@ async fn file_reverse_ready_once_removed() {
     settle(|| stats(&lines) == 1).await;
     advance(100 * MS).await;
     settle(|| stats(&lines) == 2).await;
-    breathe(20).await; // let the 101 ms stat land before the removal
-    advance(49 * MS).await;
+    // The stat line is logged before its spawn_blocking stat runs. A paused-clock sleep (unlike
+    // advance) cannot fire while that blocking task is outstanding, so the removal at 150 ms
+    // lands after the 101 ms stat instead of racing it.
+    tokio::time::sleep(49 * MS).await;
     std::fs::remove_file(&f.0).unwrap();
     assert_eq!(run.await.unwrap(), Ok(()));
     let e = t0.elapsed();
