@@ -12,6 +12,8 @@ Two files: [`.github/workflows/node.js.yml`](../../.github/workflows/node.js.yml
 | `package` | `ubuntu-latest`, Node `24.x` | `napi` | download `prebuilds-*` (merged) into `prebuilds/`, `npm ci --engine-strict`, `npm run --if-present ci:rs:package`, upload `wait-on-*.tgz` + `SHA256SUMS` as `package` (`if-no-files-found: ignore`) |
 | `prerelease` | calls `rs-prerelease.yml` | `build`, `rust`, `package` | only on `push` to `refs/heads/spike-next-rs` in `kevinold/wait-on`; `permissions: contents: write` |
 
+The table is the push matrix. Pull requests run a trimmed matrix during the spike (KD-S14, #77/#83): `build` on `ubuntu-latest` × Node `24.x` only, `rust` on `ubuntu-latest` and `windows-latest`, `napi` on the `x86_64-unknown-linux-gnu` row only, and no `package`. Pushes to `spike-next-rs` run every row, so a platform bug can first show up after a merge ([learning](../solutions/best-practices/trimmed-pr-matrix-lets-platform-bugs-escape-to-the-base.md)). Restoring the full PR matrix is an operator PR, due before the spike PR leaves draft ([releasing.md](releasing.md#cutover-what-is-still-needed)).
+
 `rs-prerelease.yml` (`on: workflow_call` and bare `workflow_dispatch`; top-level `permissions: contents: read`) has one job, `prerelease`, guarded `if: github.repository == 'kevinold/wait-on'` with `contents: write`: checkout, download artifact pattern `package` (merged) into `dist/`, then, only if `dist/wait-on-*.tgz` exists, `gh release create rs-<package.json version>-<sha7> dist/wait-on-*.tgz dist/SHA256SUMS --prerelease --target <sha>` using `GITHUB_TOKEN`. It never publishes to npm.
 
 ## npm script hook contract
@@ -36,24 +38,23 @@ If a lane needs a different `build:napi` argument shape, the `extra-args` matrix
 4. Install cells, each in a fresh temp project with `WAIT_ON_NATIVE_LIBRARY_PATH` removed: `npm install --ignore-scripts`, the same with `--omit=optional`, and `pnpm add --ignore-scripts` (pnpm pinned in `xtask/src/package.rs`, fetched with `npm exec`). `xtask/assets/prebuild-probe.js` then runs under `WAIT_ON_ENGINE=rust-strict`: it loads the installed engine, waits on a local tcp port through the API and the CLI, and prints the addon path, which must be the host dir inside the installed package.
 5. AE1 container cells: `node:24-trixie-slim` (glibc) and `node:24-alpine` (musl) images install the tarball at build time with `ignore-scripts=true`, then run with `--read-only --network none -e WAIT_ON_ENGINE=rust-strict`. A ready cell must exit 0 with the addon from `linux-<arch>[-musl]`; a timeout cell (`--no-listener`) must exit non-zero with `Timed out waiting for`. Without docker, or without the linux prebuilds for the runner arch, the cells skip with one line locally and fail under `CI`.
 
-Sizes with all eight prebuilds from `spike-next-rs` (run 36773818018, 2026-09-30):
+Sizes with all eight prebuilds, from the prerelease `rs-10.0.0-rc.1-832c588` (2026-10-01). The prebuilds roughly quadrupled since the first measurement (L9, run 36773818018, 2026-09-30: 3,359,787 bytes packed), because the HTTP, TLS and proxy checks (reqwest, rustls, ring) moved into the addon after it:
 
 | | bytes |
 |---|---|
-| packed (tarball) | 3,359,787 |
-| unpacked | 8,793,755 |
-| JS-only unpacked | 61,283 |
-| JS-only packed (no `prebuilds/`) | 18,892 |
-| `darwin-arm64` | 1,220,256 |
-| `darwin-x64` | 1,169,072 |
-| `linux-x64` | 1,365,872 |
-| `linux-arm64` | 1,444,016 |
-| `linux-x64-musl` | 926,784 |
-| `linux-arm64-musl` | 892,808 |
-| `win32-x64` | 894,976 |
-| `win32-arm64` | 818,688 |
+| packed (tarball) | 15,035,917 |
+| unpacked | 36,320,097 |
+| JS-only unpacked (no `prebuilds/`) | 70,441 |
+| `darwin-arm64` | 4,744,944 |
+| `darwin-x64` | 4,870,864 |
+| `linux-x64` | 5,701,848 |
+| `linux-arm64` | 5,552,928 |
+| `linux-x64-musl` | 4,058,248 |
+| `linux-arm64-musl` | 3,698,680 |
+| `win32-x64` | 4,086,784 |
+| `win32-arm64` | 3,535,360 |
 
-No size threshold is enforced; the numbers are PO5's decision input.
+No size threshold is enforced; the numbers are PO5's decision input. The size report `ci:rs:package` prints in each `package` job has the current numbers.
 
 ## napi target matrix
 

@@ -12,7 +12,7 @@
 
 ## Spine lanes vs operator PRs
 
-- **Spine lane (L1–L10):** one PR into `spike-next-rs`, one sub-issue of `kevinold/wait-on#35`, strict TDD, `Closes #<sub>`. Allowed paths are listed in the [spine plan](../plans/2026-09-30-1400-feat-spike-next-rs-spine-plan.md#lanes); `.github/workflows/` is never one of them.
+- **Spine lane (L1–L13):** one PR into `spike-next-rs`, one sub-issue of `kevinold/wait-on#35`, strict TDD, `Closes #<sub>`. Allowed paths are listed in the [spine plan](../plans/2026-09-30-1400-feat-spike-next-rs-spine-plan.md#lanes); `.github/workflows/` is never one of them.
 - **Operator PR:** anything touching `.github/workflows/`, repo settings, or release configuration. A CI change a lane needs is filed as an operator PR, not folded into the lane. See [ci.md](ci.md#why-lanes-cannot-edit-workflows).
 - Changing CI behavior from a lane means defining a hook script in `package.json` (`ci:rs`, `build:napi`, `ci:rs:package`; contract in [ci.md](ci.md#npm-script-hook-contract)). A lane that adds `ci:rs` must add `Cargo.toml` and `rust-toolchain.toml` in the same PR, since the toolchain steps are gated on those files.
 
