@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Node `>=22.19.0` (`engines` in [`package.json`](../../package.json); CI installs with `npm ci --engine-strict`).
-- For Rust work: rustup (reads the pinned channel and components from `rust-toolchain.toml`) `cargo-deny` (`cargo install cargo-deny --locked`) and `cargo-vet` (`cargo install cargo-vet --locked`). `npm test` needs none of them.
+- For Rust work: rustup (reads the pinned channel and components from `rust-toolchain.toml`) `cargo-deny` (`cargo install cargo-deny --locked`) and `cargo-vet` (`cargo install cargo-vet --locked`). Optional, for the [Rust coverage](testing.md#rust-coverage) check: `cargo-llvm-cov` (`cargo install cargo-llvm-cov --locked`) and the `llvm-tools-preview` component (`rustup component add llvm-tools-preview`). `npm test` needs none of them.
 
 ## Setup
 
@@ -27,6 +27,7 @@ npm test
 | `npm run ci:rs` | Rust gate on the host: `cargo vet --locked` first (in the `package.json` entry), then `scripts/ci-rs.js`: fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark | exists |
 | `npm run bench:startup [-- --runs N] [--record]` | startup overhead of the Rust engine over JS (`scripts/bench-startup.js`); needs a host prebuild; `--record` rewrites this host's entry in `benchmarks/startup-baseline.json` | exists (L8) |
 | `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`scripts/build-napi.js`) | exists |
+| `cargo llvm-cov -p wait-on-core --summary-only --ignore-filename-regex '(waiter/tests\.rs\|/tests/)'` | line and region coverage of `wait-on-core` without the test bodies; loop code stays at 100% ([testing.md](testing.md#rust-coverage)); CI enforcement is L13 | exists (local) |
 | `node benchmarks/http-ffi.js [--iterations N] [--engines js,rust-strict]` | per-check http overhead, JS vs Rust (Rust rows need a host prebuild) | exists |
 | `npm run ci:rs:package [-- --host-only]` | pack, install-matrix and container checks, size report ([ci.md](ci.md#cirspackage)); `--host-only` needs only the host prebuild | exists |
 
@@ -47,7 +48,7 @@ Exemption policy: exempt a crate only when no imported source covers it and cert
 
 `npm run build:napi` runs `napi build --release` (from `@napi-rs/cli`) on `crates/wait-on-napi` for the rustc host triple, into `target/napi/<dir>/`, then copies the addon to `prebuilds/<dir>/wait-on.node`. `-- --target <triple>` builds one of the eight supported targets; extra args such as `-x` (cross-compile; napi installs `cargo-zigbuild` on first use and needs `zig` on `PATH`) are forwarded to `napi build`. Nothing is written to the repo root. The first build compiles reqwest, rustls and ring (a C compiler is needed for ring; no cmake, NASM or OpenSSL).
 
-`prebuilds/` is not committed, so rebuild the addon after pulling Rust changes. A stale prebuild that lacks a newer export (for example `fileSize` or `runCommand`) fails the real-addon tests, which run in plain `npm test` whenever a host prebuild exists, as well as any run under `WAIT_ON_ENGINE=rust*`.
+`prebuilds/` is not committed, so rebuild the addon after pulling Rust changes. A stale prebuild that lacks a newer export (for example `wait`, which the engine requires: without it `rust` falls back to JS and `rust-strict` fails) fails the real-addon tests, which run in plain `npm test` whenever a host prebuild exists, as well as any run under `WAIT_ON_ENGINE=rust*`.
 
 ## Running each engine locally
 
