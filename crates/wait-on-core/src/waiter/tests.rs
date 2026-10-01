@@ -779,3 +779,68 @@ async fn command_drops_ticks_while_an_attempt_runs() {
         .count();
     assert_eq!(attempts, 1, "{:?}", text(&lines));
 }
+
+fn parts(kind: &str) -> Result<Resource, String> {
+    Resource::from_parts("r".into(), kind, Some("p".into()), None, None, None, None)
+}
+
+#[test]
+fn from_parts_maps_file_to_its_path() {
+    let r = parts("file").unwrap();
+    assert_eq!(r.name, "r");
+    assert!(matches!(r.kind, Kind::File(ref p) if p == "p"));
+}
+
+#[test]
+fn from_parts_maps_http_to_its_options_or_the_default() {
+    let opts = HttpOptions {
+        url: "http://localhost/".into(),
+        ..Default::default()
+    };
+    let r = Resource::from_parts("h".into(), "http", None, None, None, None, Some(opts));
+    assert!(matches!(r.unwrap().kind, Kind::Http(ref o) if o.url == "http://localhost/"));
+    let r = Resource::from_parts("h".into(), "http", None, None, None, None, None);
+    assert!(matches!(r.unwrap().kind, Kind::Http(ref o) if o.url.is_empty()));
+}
+
+#[test]
+fn from_parts_maps_tcp_with_host_and_port_or_their_defaults() {
+    let r = Resource::from_parts(
+        "t".into(),
+        "tcp",
+        Some("127.0.0.1:80".into()),
+        Some("127.0.0.1".into()),
+        Some(80),
+        None,
+        None,
+    );
+    assert!(matches!(
+        r.unwrap().kind,
+        Kind::Tcp { ref path, ref host, port: 80 } if path == "127.0.0.1:80" && host == "127.0.0.1"
+    ));
+    let r = Resource::from_parts("t".into(), "tcp", None, None, None, None, None);
+    assert!(matches!(
+        r.unwrap().kind,
+        Kind::Tcp { ref path, ref host, port: 0 } if path.is_empty() && host.is_empty()
+    ));
+}
+
+#[test]
+fn from_parts_maps_socket_and_command() {
+    assert!(matches!(parts("socket").unwrap().kind, Kind::Socket(ref p) if p == "p"));
+    let r = Resource::from_parts(
+        "c".into(),
+        "command",
+        None,
+        None,
+        None,
+        Some("exit 0".into()),
+        None,
+    );
+    assert!(matches!(r.unwrap().kind, Kind::Command(ref c) if c == "exit 0"));
+}
+
+#[test]
+fn from_parts_rejects_an_unknown_kind() {
+    assert_eq!(parts("bogus").unwrap_err(), "unknown resource kind: bogus");
+}

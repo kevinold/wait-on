@@ -15,7 +15,7 @@ const path = require('path');
 const os = require('os');
 
 const waitOn = require('../');
-const { FROZEN_NOW, itFrozen } = require('./frozen-clock');
+const { FROZEN_NOW, itFrozen, mochaHooks } = require('./frozen-clock');
 const { withEnv } = require('./helpers/engine-env');
 
 describe('frozen-clock helper (#243)', function () {
@@ -46,6 +46,10 @@ describe('frozen-clock helper (#243)', function () {
       expect(realMs).to.be.lessThan(2000); // nowhere near the 5000ms of virtual time
       done();
     }));
+  });
+
+  it('exports only the afterEach clock-restore root hook', function () {
+    expect(Object.keys(mochaHooks)).to.deep.equal(['afterEach']);
   });
 
   it('restores the real Date after a frozen test', function () {

@@ -24,7 +24,7 @@ Two front doors to the same behavior — **keep them in sync**:
 This branch (`spike-next-rs`) is building a Rust engine next to the Node one. The pure-JS
 engine stays the default; the Rust engine is opt-in via `WAIT_ON_ENGINE=rust`
 (selected and loaded in `lib/engine.js`; Rust code in `crates/`), and both must pass the
-same mocha suites, with tests Rust cannot pass yet listed in `test/rust-pending.js`. Spine lanes never edit `.github/workflows/`; they change
+same mocha suites under each engine (no pending list). Spine lanes never edit `.github/workflows/`; they change
 CI behavior through the `ci:rs`, `build:napi`, and `ci:rs:package` npm scripts. The
 Rust-side tooling behind those scripts is `cargo xtask` (crate `xtask/`). The
 developer manual is [`docs/guides/README.md`](docs/guides/README.md).
@@ -93,7 +93,9 @@ has syntax worth failing fast on.
 - Tests: mocha + chai, files `test/*.mocha.js` (`api.mocha.js`, `cli.mocha.js`,
   `validation.mocha.js`); shared fixtures `test/config-http-resources.js` and
   `test/config-headers.js`. How to write them: see
-  [Test-Driven Development](#test-driven-development-mandatory).
+  [Test-Driven Development](#test-driven-development-mandatory). Engine behaviour gets a Rust
+  test first (`crates/wait-on-core`); JS tests only at the API/CLI front doors (inventory:
+  [`docs/guides/testing.md`](docs/guides/testing.md#js-vs-rust-inventory)).
 - CI runs on **ubuntu + windows** (matrix node 22/24/26, `npm ci --engine-strict`). No
   POSIX-only assumptions: mind Windows named pipes and path separators, and don't rely on
   unix-only tooling (e.g. `openssl speed`) or shell.

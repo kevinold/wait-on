@@ -39,7 +39,8 @@ Every lane that adds a Rust check behind the addon (L3 `file:`, L4/L5 http, L6 `
 
 ## Examples
 
-Path proof that the Rust export actually answered, not the JS fallback (`test/engine-checks.mocha.js`):
+Path proof that the Rust engine actually answered, not the JS fallback. (Historical: the original `test/engine-checks.mocha.js` wrapped the per-check `addon.tcpCheck` export; lane L13 (#76) removed both the file and that export.)
 
-- **API:** wrap `addon.tcpCheck` on the object `resolveEngine(env).addon` returns. It is the same cached module the dispatch uses, and the napi export property is writable. Then assert the recorded `{ ready, timedOut, reason }`.
+- **Rust:** the readiness behavior is specified in `crates/wait-on-core/tests/tcp.rs` (`tcp_forward_times_out_while_connect_pending` and the refused/reverse cells).
+- **API:** `test/fixtures/counting-addon.js` records every `wait` call that reaches the real prebuild, so a test asserts the call count to prove the wait ran in Rust.
 - **CLI:** run with `--verbose` and assert stdout contains `(os error`. Only Rust's `io::Error` text includes it; Node prints `ECONNREFUSED`.

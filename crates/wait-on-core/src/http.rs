@@ -57,8 +57,8 @@ pub struct HttpChecker {
 static PROVIDER: Once = Once::new();
 
 impl HttpChecker {
-    /// Builds the per-resource client. Errs on an invalid method, an unparsable proxy URI or a
-    /// builder failure; never on TLS material (KTD3).
+    /// Builds the per-resource client. Errs on an invalid method or an unparsable proxy URI;
+    /// never on TLS material (KTD3).
     pub fn new(opts: HttpOptions) -> Result<Self, String> {
         // reqwest with `rustls-no-provider` panics in `build()` without a default provider.
         PROVIDER.call_once(|| {
@@ -94,18 +94,13 @@ impl HttpChecker {
             }
             b
         };
-        let has_tls = opts.roots.is_some() || opts.cert.is_some() || opts.key.is_some();
+        // Bad TLS material fails every TLS hop, not construction (Node's per-connection error).
+        // Only TLS material can fail a build here: the proxy is parsed above, the provider is
+        // installed, and an empty trust set builds (`non_pem_roots_are_an_empty_trust_set`).
         let client = with_tls(base(), &opts)
             .and_then(ClientBuilder::build)
-            // Bad TLS material fails every TLS hop, not construction (Node's per-connection error).
-            .or_else(|e| {
-                if has_tls {
-                    base().tls_certs_only([]).build()
-                } else {
-                    Err(e)
-                }
-            })
-            .map_err(|e| error_chain(&e))?;
+            .or_else(|_| base().tls_certs_only([]).build())
+            .expect("a client with an empty trust set always builds");
         Ok(Self {
             client: Mutex::new(Some(client)),
             method,
@@ -337,6 +332,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_reuses_one_connection_across_checks() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = listener.try_clone().unwrap();
+        thread::spawn(move || {
+            let (mut s, _) = server.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            for _ in 0..2 {
+                let _ = s.read(&mut buf);
+                s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .unwrap();
+            }
+        });
+        // a second connection would get no reply: its check times out
+        let c = checker(url, "GET", true, Some(1000));
+        assert!(c.check(None::<NoValidate>).await.ok);
+        assert!(c.check(None::<NoValidate>).await.ok);
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_err());
+    }
+
+    #[tokio::test]
     async fn head_200_with_content_length_and_no_body_is_ready() {
         let (base, _rx) = serve(vec![stall("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")]);
         let c = checker(base, "HEAD", true, Some(1000));
@@ -445,11 +462,8 @@ mod tests {
             .await;
         assert!(!out.ok, "{out:?}");
         assert!(out.error.is_some(), "{out:?}");
-        assert!(
-            start.elapsed() < Duration::from_millis(500),
-            "{:?}",
-            start.elapsed()
-        );
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
     }
 
     #[tokio::test]
@@ -463,11 +477,8 @@ mod tests {
             .await;
         assert!(!out.ok, "{out:?}");
         assert!(out.error.is_some(), "{out:?}");
-        assert!(
-            start.elapsed() < Duration::from_millis(500),
-            "{:?}",
-            start.elapsed()
-        );
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
     }
 
     #[tokio::test]
@@ -724,5 +735,42 @@ mod tests {
         let later = c.check(None::<NoValidate>).await;
         assert_eq!(later.error.as_deref(), Some("cancelled"));
         assert!(!later.ok);
+        // `check` races `send` against the cancel flag; pin the client-gone arm directly.
+        assert_eq!(c.send(None::<NoValidate>).await, cancelled());
+    }
+
+    #[tokio::test]
+    async fn validate_fn_pointer_overrides_the_2xx_rule() {
+        // Same `NoValidate` instantiation as the `None` calls (llvm-cov counts regions per
+        // instantiation), so that one instantiation runs both arms of the status rule.
+        let (base, _rx) = serve(vec![reply(&format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n{CLOSE}\r\n"
+        ))]);
+        let accept_401: NoValidate = |s| std::future::ready(Ok(s == 401));
+        let out = checker(base, "GET", true, Some(1000))
+            .check(Some(accept_401))
+            .await;
+        assert!(out.ok, "{out:?}");
+        assert_eq!(out.status, Some(401));
+    }
+
+    #[test]
+    fn invalid_method_fails_construction() {
+        let err = with("http://127.0.0.1:1/".into(), |o| {
+            o.method = "BAD METHOD".into()
+        });
+        assert_eq!(err.err().as_deref(), Some("invalid HTTP method"));
+    }
+
+    #[tokio::test]
+    async fn valid_client_identity_builds_and_plain_http_is_ready() {
+        let (base, _rx) = serve(vec![reply(OK)]);
+        let c = with(base, |o| {
+            o.cert = Some(include_str!("../tests/fixtures/client.pem").into());
+            o.key = Some(include_str!("../tests/fixtures/client-key.pem").into());
+        })
+        .unwrap();
+        let out = c.check(None::<NoValidate>).await;
+        assert!(out.ok, "{out:?}");
     }
 }
