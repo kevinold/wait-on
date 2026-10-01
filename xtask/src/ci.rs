@@ -95,8 +95,21 @@ fn cargo_exe() -> PathBuf {
     std::env::var_os("CARGO").map_or_else(|| PathBuf::from("cargo"), PathBuf::from)
 }
 
+/// The env for an inner cargo call: the parent env with `CARGO_TARGET_DIR` pointed at a
+/// directory of its own, so it can never relink the running xtask binary (Windows locks it).
+pub fn cargo_env(root: &Path, mut parent: HashMap<String, String>) -> HashMap<String, String> {
+    let outer = parent
+        .get("CARGO_TARGET_DIR")
+        .map_or_else(|| root.join("target"), |dir| root.join(dir));
+    let inner = outer.join("xtask-inner");
+    parent.insert("CARGO_TARGET_DIR".into(), inner.display().to_string());
+    parent
+}
+
 fn cargo(args: &[String]) -> i32 {
-    host::run(&cargo_exe(), args, &host::repo_root(), None)
+    let root = host::repo_root();
+    let env = cargo_env(&root, host::env_map());
+    host::run(&cargo_exe(), args, &root, Some(&env))
 }
 
 pub fn fmt(_: &[String]) -> i32 {
@@ -171,6 +184,60 @@ mod tests {
                 "--output-path",
                 "a b.info"
             ])
+        );
+    }
+
+    /// Every cargo argv xtask spawns: the ci steps plus the single-command subcommands.
+    fn inner_cargo_commands() -> Vec<Vec<String>> {
+        let mut all: Vec<Vec<String>> = steps()
+            .into_iter()
+            .filter_map(|s| match s {
+                Step::Cargo(args) => Some(args),
+                _ => None,
+            })
+            .collect();
+        all.extend([fmt_args(), lint_args(), test_args(), cov_args(&[])]);
+        all
+    }
+
+    #[test]
+    fn inner_cargo_never_shares_the_running_xtask_target_dir() {
+        let root = Path::new("/repo");
+        let parent = HashMap::from([("PATH".to_string(), "/bin".to_string())]);
+        let env = cargo_env(root, parent);
+        let dir = PathBuf::from(env.get("CARGO_TARGET_DIR").expect("CARGO_TARGET_DIR set"));
+        assert_eq!(dir, root.join("target").join("xtask-inner"));
+        assert_eq!(
+            env.get("PATH").map(String::as_str),
+            Some("/bin"),
+            "parent env kept"
+        );
+        assert_eq!(
+            inner_cargo_commands().len(),
+            9,
+            "every inner cargo call routes through cargo()"
+        );
+    }
+
+    #[test]
+    fn inner_target_dir_nests_under_a_caller_set_target_dir() {
+        let root = Path::new("/repo");
+        let parent = HashMap::from([("CARGO_TARGET_DIR".to_string(), "/tmp/t".to_string())]);
+        let env = cargo_env(root, parent);
+        assert_eq!(
+            PathBuf::from(&env["CARGO_TARGET_DIR"]),
+            Path::new("/tmp/t").join("xtask-inner")
+        );
+    }
+
+    #[test]
+    fn inner_target_dir_resolves_a_relative_caller_dir_against_the_repo_root() {
+        let root = Path::new("/repo");
+        let parent = HashMap::from([("CARGO_TARGET_DIR".to_string(), "out".to_string())]);
+        let env = cargo_env(root, parent);
+        assert_eq!(
+            PathBuf::from(&env["CARGO_TARGET_DIR"]),
+            root.join("out").join("xtask-inner")
         );
     }
 
