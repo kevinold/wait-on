@@ -42,6 +42,18 @@ fn unknown_subcommand_is_named_and_exits_2() {
 }
 
 #[test]
+fn package_refuses_to_run_outside_npm() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["package", "--host-only"])
+        .env_remove("npm_execpath")
+        .output()
+        .expect("spawn xtask");
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run this through npm"), "{stderr}");
+}
+
+#[test]
 fn bench_startup_names_the_addon_when_the_rust_engine_cannot_load() {
     let missing = std::env::temp_dir().join(format!("wait-on-missing-{}.node", std::process::id()));
     let out = Command::new(env!("CARGO_BIN_EXE_xtask"))

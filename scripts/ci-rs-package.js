@@ -195,7 +195,7 @@ function main() {
   fs.writeFileSync(path.join(repoRoot, 'SHA256SUMS'), sha256sumsLine(tgz));
   console.log(`wrote ${packJson.filename} and SHA256SUMS`);
 
-  const probe = path.join(__dirname, 'prebuild-probe.js');
+  const probe = path.join(repoRoot, 'xtask', 'assets', 'prebuild-probe.js');
   const host = hostDir();
   for (const cell of installCells({ tgz, npmExecPath: npm, env: process.env })) {
     const project = fs.mkdtempSync(path.join(os.tmpdir(), `wait-on-${cell.name}-`));

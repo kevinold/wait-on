@@ -56,7 +56,6 @@ pub fn prebuild_dir(platform: &str, arch: &str, musl: bool) -> String {
 }
 
 /// This host's prebuild dir, as `lib/engine.js` names it.
-#[allow(dead_code)] // ponytail: first caller is package --host-only (U4)
 pub fn host_dir() -> Result<String, String> {
     let (platform, arch) = node_name(std::env::consts::OS, std::env::consts::ARCH)?;
     Ok(prebuild_dir(platform, arch, cfg!(target_env = "musl")))

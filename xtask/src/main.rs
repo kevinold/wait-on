@@ -3,6 +3,7 @@
 mod bench;
 mod build_napi;
 mod host;
+mod package;
 
 use std::process::ExitCode;
 
@@ -13,10 +14,7 @@ fn main() -> ExitCode {
     let code = match args.first().map(String::as_str) {
         Some("build-napi") => build_napi::run(&args[1..]),
         Some("bench-startup") => bench::run(&args[1..]),
-        Some(cmd @ "package") => {
-            eprintln!("{cmd}: not implemented yet");
-            2
-        }
+        Some("package") => package::run(&args[1..]),
         Some(other) => {
             eprintln!("unknown subcommand {other}\n{USAGE}");
             2
