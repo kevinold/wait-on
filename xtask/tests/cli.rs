@@ -104,10 +104,12 @@ fn hooks_points_core_hookspath_at_githooks_in_the_current_repo() {
     let _ = std::fs::remove_dir_all(&repo);
     std::fs::create_dir_all(&repo).expect("create temp repo dir");
     let git = |args: &[&str]| Command::new("git").args(args).current_dir(&repo).output();
-    if !git(&["init", "-q"]).is_ok_and(|out| out.status.success()) {
+    if Command::new("git").arg("--version").output().is_err() {
         eprintln!("skipping: git is not available");
         return;
     }
+    let init = git(&["init", "-q"]).expect("spawn git init");
+    assert!(init.status.success(), "git init failed: {init:?}");
     let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("hooks")
         .current_dir(&repo)

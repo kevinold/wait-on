@@ -149,6 +149,11 @@ fn cases() -> Vec<(&'static str, String, Vec<&'static str>)> {
 #[test]
 fn commit_msg_hook_reports_each_rule_and_accepts_conforming_messages() {
     if !git_hook_run_available() {
+        // CI runners have a current git, so a missing `git hook run` there is a broken runner.
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "git lacks `git hook run` (needs git 2.36+) on CI"
+        );
         eprintln!("skipping: git lacks `git hook run` (needs git 2.36+)");
         return;
     }
