@@ -37,6 +37,35 @@ pub struct Resource {
     pub kind: Kind,
 }
 
+impl Resource {
+    /// The JS spec's `kind` string picks which fields are read: file/socket `path`, tcp
+    /// `path`+`host`+`port`, command `command`, http `http`. A missing field is its default.
+    pub fn from_parts(
+        name: String,
+        kind: &str,
+        path: Option<String>,
+        host: Option<String>,
+        port: Option<u16>,
+        command: Option<String>,
+        http: Option<HttpOptions>,
+    ) -> Result<Self, String> {
+        let path = path.unwrap_or_default();
+        let kind = match kind {
+            "file" => Kind::File(path),
+            "http" => Kind::Http(http.unwrap_or_default()),
+            "tcp" => Kind::Tcp {
+                path,
+                host: host.unwrap_or_default(),
+                port: port.unwrap_or_default(),
+            },
+            "socket" => Kind::Socket(path),
+            "command" => Kind::Command(command.unwrap_or_default()),
+            other => return Err(format!("unknown resource kind: {other}")),
+        };
+        Ok(Self { name, kind })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Kind {
     File(String),

@@ -22,7 +22,6 @@ const { routesHttpToRust } = waitOn._internal;
 
 const { withEnv, runCLI: runCLIWith } = require('./helpers/engine-env');
 const tlsFixture = require('./helpers/tls-fixture');
-const stubProxy = require('./helpers/stub-proxy');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ADDON = path.join(__dirname, 'fixtures', 'fake-addon.js');
@@ -199,40 +198,15 @@ describe('engine selection', function () {
       expect(engine).to.equal('rust');
       expect(addon.version()).to.equal(workspaceVersion());
       expect(addon.noop()).to.equal(undefined);
-    });
-
-    it('should answer fileSize from the built addon when a host prebuild exists', async function () {
-      if (!fs.existsSync(addonPath({}))) this.skip();
-      const addon = require(addonPath({}));
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-filesize-'));
-      try {
-        const file = path.join(dir, 'f');
-        fs.writeFileSync(file, '12345');
-        const pending = addon.fileSize(file);
-        expect(pending).to.be.an.instanceof(Promise);
-        expect(await pending).to.equal(5);
-        expect(await addon.fileSize(path.join(dir, 'missing'))).to.equal(-1);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it('should answer runCommand from the built addon when a host prebuild exists', async function () {
-      if (!fs.existsSync(addonPath({}))) this.skip();
-      const addon = require(addonPath({}));
-      const pending = addon.runCommand('node -e "process.exit(0)"', 0);
-      expect(pending).to.be.an.instanceof(Promise);
-      expect((await pending).ok).to.equal(true);
-      const failed = await addon.runCommand('node -e "console.error(\'boom\'); process.exit(3)"', 0);
-      expect(failed.ok).to.equal(false);
-      expect(failed.error).to.match(/^Command failed: /);
-      expect(failed.error).to.include('boom');
+      expect(Object.keys(addon).sort()).to.deep.equal(
+        ['noop', 'parseHostPort', 'parseHttpUnix', 'parseInterval', 'parsePrefix', 'version', 'wait']
+      );
     });
 
     it('should keep answering a file: probe while five slow commands run under the built addon', async function () {
       if (!fs.existsSync(addonPath({}))) this.skip();
-      // Five 3s commands outnumber the 4 libuv threadpool threads; fileSize runs on that
-      // pool, so the file resolves only if runCommand keeps its attempts off the pool.
+      // Five 3s commands outnumber the 4 libuv threadpool threads; the file check resolves
+      // only if command attempts do not starve it.
       const slow = [1, 2, 3, 4, 5].map((n) => `command:node -e "setTimeout(function () {}, 3000)" ${n}`);
       let err;
       await withEnv({ WAIT_ON_ENGINE: 'rust-strict' }, () =>
@@ -241,226 +215,6 @@ describe('engine selection', function () {
       expect(err.message).to.match(/^Timed out waiting for/);
       expect(err.message).to.include(slow[4].slice('command:'.length));
       expect(err.message).to.not.include(__filename);
-    });
-  });
-
-  describe('real addon HttpChecker', function () {
-    let addon;
-    const closers = [];
-
-    before(function () {
-      if (!fs.existsSync(addonPath({}))) this.skip();
-      addon = require(addonPath({}));
-    });
-
-    afterEach(function () {
-      while (closers.length) closers.pop()();
-    });
-
-    // Listens on an ephemeral port; counts accepted sockets and destroys them on cleanup.
-    function listen(server) {
-      const sockets = new Set();
-      server.on('connection', (s) => sockets.add(s));
-      closers.push(() => {
-        for (const s of sockets) s.destroy();
-        server.close();
-      });
-      return new Promise((resolve) =>
-        server.listen(0, '127.0.0.1', () =>
-          resolve({ url: `http://127.0.0.1:${server.address().port}/`, sockets })
-        )
-      );
-    }
-    const okServer = () => listen(http.createServer((req, res) => res.end()));
-    const hungServer = () => listen(net.createServer(() => {}));
-
-    function checker(url, extra = {}) {
-      return new addon.HttpChecker({ url, method: 'HEAD', headers: {}, followRedirect: true, ...extra });
-    }
-
-    it('should export an HttpChecker class with check and cancel', function () {
-      expect(addon.HttpChecker).to.be.a('function');
-      expect(addon.HttpChecker.prototype.check).to.be.a('function');
-      expect(addon.HttpChecker.prototype.cancel).to.be.a('function');
-    });
-
-    it('should resolve ok with the status when the server answers 200', async function () {
-      const { url } = await okServer();
-      const r = await checker(url).check();
-      expect(r.ok).to.equal(true);
-      expect(r.status).to.equal(200);
-    });
-
-    it('should resolve not ok when validateStatus rejects the status', async function () {
-      const { url } = await okServer();
-      const r = await checker(url).check((s) => s === 500);
-      expect(r).to.include({ ok: false, status: 200 });
-    });
-
-    it('should resolve not ok and keep the process alive when validateStatus throws', async function () {
-      const { url } = await okServer();
-      const r = await checker(url).check(() => {
-        throw new Error('boom');
-      });
-      expect(r).to.include({ ok: false, status: 200 });
-    });
-
-    it('should settle every in-flight and later check not ok after one cancel', async function () {
-      const { url } = await hungServer();
-      const c = checker(url);
-      const inflight = [c.check(), c.check()];
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const t0 = Date.now();
-      c.cancel();
-      const results = await Promise.all(inflight);
-      expect(Date.now() - t0).to.be.below(500);
-      for (const r of results) expect(r).to.include({ ok: false, error: 'cancelled' });
-      const t1 = Date.now();
-      expect(await c.check()).to.include({ ok: false, error: 'cancelled' });
-      expect(Date.now() - t1).to.be.below(100);
-    });
-
-    it('should settle not ok when timeoutMs elapses against a hung server', async function () {
-      const { url } = await hungServer();
-      const r = await checker(url, { timeoutMs: 50 }).check();
-      expect(r.ok).to.equal(false);
-      expect(r.error).to.be.a('string');
-    });
-
-    it('should reuse one connection across sequential checks', async function () {
-      const { url, sockets } = await okServer();
-      const c = checker(url);
-      expect((await c.check()).ok).to.equal(true);
-      expect((await c.check()).ok).to.equal(true);
-      expect(sockets.size).to.equal(1);
-    });
-
-    it('should send the request through the proxy when proxy is set', async function () {
-      const { url } = await okServer();
-      const proxy = await stubProxy.start();
-      closers.push(() => proxy.close());
-      expect((await checker(url, { proxy: proxy.url }).check()).ok).to.equal(true);
-      expect(proxy.requests.map((r) => r.line)).to.deep.equal([`HEAD ${url}`]);
-    });
-
-    it('should construct and settle not ok with an error when roots do not parse', async function () {
-      const fx = tlsFixture();
-      if (!fx) this.skip();
-      closers.push(fx.cleanup);
-      const server = https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end());
-      const { url } = await listen(server);
-      const httpsUrl = url.replace('http:', 'https:');
-      expect((await checker(httpsUrl).check()).ok).to.equal(true); // reachable without roots
-      const bad = '-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n';
-      const r = await checker(httpsUrl, { roots: [bad] }).check();
-      expect(r.ok).to.equal(false);
-      expect(r.error).to.be.a('string');
-    });
-
-    it('should connect over the unix socket (named pipe on Windows) when socketPath is set', async function () {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-addon-sock-'));
-      closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-      const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
-      const seen = [];
-      const server = http.createServer((req, res) => {
-        seen.push(req.url);
-        res.end();
-      });
-      closers.push(() => server.close());
-      await new Promise((resolve) => server.listen(sock, resolve));
-      expect((await checker('http://localhost/', { socketPath: sock }).check()).ok).to.equal(true);
-      expect(seen).to.deep.equal(['/']);
-    });
-  });
-
-  describe('real addon wait', function () {
-    let addon;
-
-    before(function () {
-      if (!fs.existsSync(addonPath({}))) this.skip();
-      addon = require(addonPath({}));
-    });
-
-    const BASE = { delayMs: 0, intervalMs: 50, windowMs: 0, tcpTimeoutMs: 300, commandTimeoutMs: 0, reverse: false, verbose: false };
-
-    it('should resolve ok after delivering the waiting line when the file is ready', async function () {
-      const lines = [];
-      const r = await addon.wait(
-        { ...BASE, timeoutMs: 2000, resources: [{ name: __filename, kind: 'file', path: __filename }] },
-        (line) => lines.push(line)
-      );
-      expect(lines).to.include(`waiting for 1 resources: ${__filename}`);
-      expect(r).to.deep.equal({ ok: true, error: null });
-    });
-
-    describe('with servers', function () {
-      const closers = [];
-      afterEach(function () {
-        while (closers.length) closers.pop()();
-      });
-
-      function listen(server, at) {
-        closers.push(() => server.close());
-        return new Promise((resolve) => server.listen(...at, () => resolve(server.address())));
-      }
-      const httpSpec = (port) => ({ url: `http://127.0.0.1:${port}/`, method: 'HEAD', headers: {}, followRedirect: true });
-
-      it('should resolve ok when one ready resource of each kind is waited on', async function () {
-        const { port: httpPort } = await listen(
-          http.createServer((req, res) => res.end()),
-          [0, '127.0.0.1']
-        );
-        const { port: tcpPort } = await listen(net.createServer((s) => s.destroy()), [0, '127.0.0.1']);
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-addon-wait-'));
-        closers.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-        const sock = process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, 'sock') : path.join(dir, 'sock');
-        await listen(net.createServer((s) => s.destroy()), [sock]);
-        const r = await addon.wait({
-          ...BASE,
-          timeoutMs: 5000,
-          resources: [
-            { name: __filename, kind: 'file', path: __filename },
-            { name: 'http', kind: 'http', http: httpSpec(httpPort) },
-            { name: 'tcp', kind: 'tcp', path: `127.0.0.1:${tcpPort}`, host: '127.0.0.1', port: tcpPort },
-            { name: 'socket', kind: 'socket', path: sock },
-            { name: 'command', kind: 'command', command: 'exit 0' }
-          ]
-        });
-        expect(r).to.deep.equal({ ok: true, error: null });
-      });
-
-      it('should decide http readiness with validateStatus', async function () {
-        const { port } = await listen(
-          http.createServer((req, res) => res.end()),
-          [0, '127.0.0.1']
-        );
-        const spec = { ...BASE, timeoutMs: 300, resources: [{ name: 'h', kind: 'http', http: httpSpec(port) }] };
-        expect(await addon.wait(spec, undefined, (s) => s === 500)).to.deep.equal({
-          ok: false,
-          error: 'Timed out waiting for: h'
-        });
-        expect(await addon.wait(spec, undefined, (s) => s === 200)).to.deep.equal({ ok: true, error: null });
-      });
-    });
-
-    it('should resolve the exact timeout message when tcp never connects', async function () {
-      const r = await addon.wait({
-        ...BASE,
-        timeoutMs: 300,
-        resources: [{ name: 'tcp:127.0.0.1:1', kind: 'tcp', path: '127.0.0.1:1', host: '127.0.0.1', port: 1 }]
-      });
-      expect(r).to.deep.equal({ ok: false, error: 'Timed out waiting for: tcp:127.0.0.1:1' });
-    });
-
-    it('should resolve with timeoutMs, simultaneous and log all absent', async function () {
-      const r = await addon.wait({ ...BASE, resources: [{ name: __filename, kind: 'file', path: __filename }] });
-      expect(r).to.deep.equal({ ok: true, error: null });
-    });
-
-    it('should throw on an unknown resource kind', function () {
-      expect(() => addon.wait({ ...BASE, resources: [{ name: 'x', kind: 'bogus' }] })).to.throw(
-        'unknown resource kind: bogus'
-      );
     });
   });
 

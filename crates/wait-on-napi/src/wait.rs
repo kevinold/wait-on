@@ -60,24 +60,16 @@ impl TryFrom<ResourceSpec> for waiter::Resource {
     type Error = Error;
 
     fn try_from(r: ResourceSpec) -> Result<Self> {
-        let path = r.path.unwrap_or_default();
-        let kind = match r.kind.as_str() {
-            "file" => waiter::Kind::File(path),
-            "http" => waiter::Kind::Http(r.http.unwrap_or_default().into()),
-            "tcp" => waiter::Kind::Tcp {
-                path,
-                host: r.host.unwrap_or_default(),
-                port: r.port.unwrap_or_default(),
-            },
-            "socket" => waiter::Kind::Socket(path),
-            "command" => waiter::Kind::Command(r.command.unwrap_or_default()),
-            other => {
-                return Err(Error::from_reason(format!(
-                    "unknown resource kind: {other}"
-                )));
-            }
-        };
-        Ok(Self { name: r.name, kind })
+        Self::from_parts(
+            r.name,
+            &r.kind,
+            r.path,
+            r.host,
+            r.port,
+            r.command,
+            r.http.map(Into::into),
+        )
+        .map_err(Error::from_reason)
     }
 }
 

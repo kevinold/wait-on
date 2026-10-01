@@ -1,7 +1,7 @@
-//! JS binding for `wait_on_core::http`: `new HttpChecker(opts)`, `check(validateStatus?)`, `cancel()`.
+//! JS shape of `wait_on_core::http::HttpOptions` (one `wait` resource's `http`) and the
+//! `validateStatus` callback type.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
@@ -12,7 +12,6 @@ use wait_on_core::http;
 pub(crate) type ValidateStatus = ThreadsafeFunction<u16, bool, u16, Status, false, true>;
 
 #[napi(object)]
-#[derive(Default)]
 pub struct HttpCheckerOptions {
     pub url: String,
     /// `"HEAD"` or `"GET"`.
@@ -44,59 +43,5 @@ impl From<HttpCheckerOptions> for http::HttpOptions {
             proxy: opts.proxy,
             socket_path: opts.socket_path,
         }
-    }
-}
-
-#[napi(object)]
-pub struct HttpCheckResult {
-    pub ok: bool,
-    pub status: Option<u16>,
-    pub status_text: Option<String>,
-    pub error: Option<String>,
-}
-
-#[napi]
-pub struct HttpChecker {
-    // Arc: each check's future owns a handle, so it never borrows the JS object.
-    inner: Arc<http::HttpChecker>,
-}
-
-#[napi]
-impl HttpChecker {
-    #[napi(constructor)]
-    pub fn new(opts: HttpCheckerOptions) -> Result<Self> {
-        let inner = http::HttpChecker::new(opts.into()).map_err(Error::from_reason)?;
-        Ok(Self {
-            inner: Arc::new(inner),
-        })
-    }
-
-    /// Resolves `{ ok, status?, statusText?, error? }`; never rejects for not-ready.
-    #[napi(ts_return_type = "Promise<HttpCheckResult>")]
-    pub fn check(
-        &self,
-        env: Env,
-        validate_status: Option<ValidateStatus>,
-    ) -> Result<AsyncBlock<HttpCheckResult>> {
-        let inner = Arc::clone(&self.inner);
-        AsyncBlockBuilder::new(async move {
-            // call_async_catch: a JS throw or non-bool is Err (=> not ready), never a fatal exception.
-            let validate =
-                validate_status.map(|f| move |s: u16| async move { f.call_async_catch(s).await });
-            let out = inner.check(validate).await;
-            Ok(HttpCheckResult {
-                ok: out.ok,
-                status: out.status,
-                status_text: out.status_text,
-                error: out.error,
-            })
-        })
-        .build(&env)
-    }
-
-    /// Settles every in-flight and later `check` as `{ ok: false, error: 'cancelled' }`.
-    #[napi]
-    pub fn cancel(&self) {
-        self.inner.cancel();
     }
 }

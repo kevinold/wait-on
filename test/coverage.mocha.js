@@ -7,7 +7,7 @@
 // CLI cases spawn `node bin/wait-on` so nyc instruments the subprocess.
 //
 // The LT2 plan left the non-timeout `exiting with error` log in cleanup (now
-// lib/wait-on.js:152) uncovered as unreachable; a dispatcher/HttpChecker construction
+// lib/wait-on.js:152) uncovered as unreachable; a dispatcher/http checker construction
 // error now reaches it through the stream, and in L7 U5 the Rust engine's non-timeout
 // error result reaches it too.
 

@@ -337,6 +337,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_reuses_one_connection_across_checks() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = listener.try_clone().unwrap();
+        thread::spawn(move || {
+            let (mut s, _) = server.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            for _ in 0..2 {
+                let _ = s.read(&mut buf);
+                s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .unwrap();
+            }
+        });
+        // a second connection would get no reply: its check times out
+        let c = checker(url, "GET", true, Some(1000));
+        assert!(c.check(None::<NoValidate>).await.ok);
+        assert!(c.check(None::<NoValidate>).await.ok);
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_err());
+    }
+
+    #[tokio::test]
     async fn head_200_with_content_length_and_no_body_is_ready() {
         let (base, _rx) = serve(vec![stall("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")]);
         let c = checker(base, "HEAD", true, Some(1000));
