@@ -797,6 +797,32 @@ describe('engine selection', function () {
     });
   });
 
+  // AE-L7-3 / KTD5: the engine is required lazily, so loading wait-on pulls in neither
+  // rxjs nor undici until a JS-engine wait runs. Subprocess for a clean require.cache.
+  describe('module graph', function () {
+    this.timeout(10000);
+    const LOADED =
+      "const loaded = () => { const keys = Object.keys(require.cache).map((k) => k.split(require('path').sep).join('/'));" +
+      " return { rxjs: keys.some((k) => k.includes('node_modules/rxjs/')), undici: keys.some((k) => k.includes('node_modules/undici/')) }; };";
+
+    function runGraph(program) {
+      const env = { ...process.env, WAIT_ON_ENGINE: 'js' };
+      delete env.WAIT_ON_NATIVE_LIBRARY_PATH;
+      const r = childProcess.spawnSync(process.execPath, ['-e', LOADED + program], { cwd: REPO_ROOT, env, encoding: 'utf8', timeout: 8000 });
+      expect(r.status, r.stderr).to.equal(0);
+      return JSON.parse(r.stdout.trim().split('\n').pop());
+    }
+
+    it('should load neither rxjs nor undici on a bare require', function () {
+      expect(runGraph("require('./lib/wait-on'); console.log(JSON.stringify(loaded()));")).to.deep.equal({ rxjs: false, undici: false });
+    });
+
+    it('should load both once a JS-engine wait runs', function () {
+      const program = `require('./lib/wait-on')({ resources: [${JSON.stringify(__filename)}], window: 0, interval: 10 }).then(() => console.log(JSON.stringify(loaded())));`;
+      expect(runGraph(program)).to.deep.equal({ rxjs: true, undici: true });
+    });
+  });
+
   describe('prebuild resolution', function () {
     const cells = [
       [{ platform: 'darwin', arch: 'arm64', musl: false }, 'darwin-arm64'],
