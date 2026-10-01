@@ -141,6 +141,8 @@ Files are under `crates/wait-on-core/`.
 | `test/native-helpers.mocha.js`, `test/frozen-clock.mocha.js` | JS-only helpers (`_internal`, proxy decision helpers) and the JS fake clock |
 | `test/prebuild-probe.mocha.js`, `test/rust-scaffold.mocha.js`, `test/benchmarks.mocha.js` | packaging probe, toolchain and `ci:rs` pins, benchmark helpers |
 
+Spike-created JS tests are deleted only when every assertion is already covered by a Rust test. The L14 audit (#91, [plan](../plans/2026-10-01-spike-rs-l14-js-test-cleanup-plan.md#audit-base-832c588)) found none that are: each file above, and every spike fixture and helper, still asserts something no Rust test does.
+
 ## Rust coverage
 
 `npm run ci:rs` ends with the coverage gate:
