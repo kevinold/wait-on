@@ -8,9 +8,9 @@ mod package;
 
 use std::process::ExitCode;
 
-/// Every subcommand: name, one-line description, entry point. Dispatch and usage both read it.
 type Run = fn(&[String]) -> i32;
 
+/// Every subcommand: name, one-line description, entry point. Dispatch and usage both read it.
 const COMMANDS: &[(&str, &str, Run)] = &[
     (
         "ci",

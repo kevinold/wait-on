@@ -24,7 +24,7 @@ npm test
 | `npm run test:mocha` | `mocha --exit "test/**/*.mocha.js"` | exists |
 | `npm run test:types` | `tsc -p test/tsconfig.json` (type tests for `index.d.ts`) | exists |
 | `npm run test:coverage` | nyc + mocha, thresholds from `.nycrc.json` | exists |
-| `npm run ci:rs` | `cargo xtask ci`, the Rust gate on the host: `cargo vet --locked`, fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark; stops at the first failure | exists |
+| `npm run ci:rs` | `cargo vet --locked && cargo xtask ci` (vet runs before cargo builds xtask), the Rust gate on the host: `cargo vet --locked`, fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark; stops at the first failure | exists |
 | `npm run bench:startup [-- --runs N] [--record]` | startup overhead of the Rust engine over JS (`cargo xtask bench-startup`); needs a host prebuild; `--record` rewrites this host's entry in `benchmarks/startup-baseline.json` | exists (L8) |
 | `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`cargo xtask build-napi`; `--target` without a value is an error) | exists |
 | `node benchmarks/http-ffi.js [--iterations N] [--engines js,rust-strict]` | per-check http overhead, JS vs Rust (Rust rows need a host prebuild) | exists |

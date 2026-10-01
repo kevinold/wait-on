@@ -406,13 +406,7 @@ fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
 
 /// The subcommand: returns the process exit code.
 pub fn run(args: &[String]) -> i32 {
-    match package(args) {
-        Ok(()) => 0,
-        Err(err) => {
-            eprintln!("{err}");
-            1
-        }
-    }
+    host::exit_code(package(args).map(|()| 0))
 }
 
 fn package(args: &[String]) -> Result<(), String> {
@@ -476,9 +470,7 @@ fn package(args: &[String]) -> Result<(), String> {
 
     let probe = probe_path(&root);
     let host = host::host_dir()?;
-    let env: HashMap<String, String> = std::env::vars_os()
-        .map(|(k, v)| (k.to_string_lossy().into(), v.to_string_lossy().into()))
-        .collect();
+    let env = host::env_map();
     for cell in install_cells(&tgz.to_string_lossy(), &npm, &env) {
         let project = fresh_temp_dir(cell.name)?;
         let pio = |e: std::io::Error| format!("{}: {e}", project.display());

@@ -70,7 +70,7 @@ pub fn mocha_command(root: &Path) -> (PathBuf, Vec<String>, HashMap<String, Stri
         "--exit".to_string(),
         "test/**/*.mocha.js".to_string(),
     ];
-    let mut env: HashMap<String, String> = std::env::vars().collect();
+    let mut env = host::env_map();
     env.insert("WAIT_ON_ENGINE".to_string(), "rust-strict".to_string());
     (host::node_exe(), args, env)
 }

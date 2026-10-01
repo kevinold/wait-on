@@ -100,13 +100,7 @@ pub fn plan(target: &str, extra: &[String], root: &Path) -> Result<Plan, String>
 
 /// The subcommand: returns the process exit code.
 pub fn run(args: &[String]) -> i32 {
-    match build(args) {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("{err}");
-            1
-        }
-    }
+    host::exit_code(build(args))
 }
 
 fn build(args: &[String]) -> Result<i32, String> {

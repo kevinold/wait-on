@@ -158,15 +158,12 @@ pub fn with_recording(baseline: &Baseline, key: &str, sample: Sample) -> Baselin
     next
 }
 
+/// Per-spawn kill deadline, as the JS oracle's `execFile` `timeout: 30000`.
+const SPAWN_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The subcommand: returns the process exit code.
 pub fn run(args: &[String]) -> i32 {
-    match bench(args) {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("{err}");
-            1
-        }
-    }
+    host::exit_code(bench(args))
 }
 
 fn bench(args: &[String]) -> Result<i32, String> {
@@ -184,17 +181,21 @@ fn bench(args: &[String]) -> Result<i32, String> {
     let wait_on = root.join("bin").join("wait-on");
     let time = |engine: &str| -> Result<f64, String> {
         let start = Instant::now();
-        let out = Command::new(host::node_exe())
-            .arg(&wait_on)
+        let mut cmd = Command::new(host::node_exe());
+        cmd.arg(&wait_on)
             .args([format!("tcp:127.0.0.1:{port}"), "-t".into(), "10000".into()])
             .current_dir(&root)
             .env("WAIT_ON_ENGINE", engine)
-            .stdin(Stdio::null())
-            .output();
+            .stdin(Stdio::null());
+        let out = host::output_within(&mut cmd, SPAWN_LIMIT);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
         match out {
-            Ok(o) if o.status.success() => Ok(elapsed),
-            Ok(o) => Err(format!(
+            Ok(Some(o)) if o.status.success() => Ok(elapsed),
+            Ok(None) => Err(format!(
+                "WAIT_ON_ENGINE={engine} run failed (exit timeout): killed after {}s",
+                SPAWN_LIMIT.as_secs()
+            )),
+            Ok(Some(o)) => Err(format!(
                 "WAIT_ON_ENGINE={engine} run failed (exit {}): {}",
                 o.status.code().map_or("signal".into(), |c| c.to_string()),
                 String::from_utf8_lossy(&o.stderr)

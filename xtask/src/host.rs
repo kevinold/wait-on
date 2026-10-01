@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::Duration;
 
 /// The repository root: the parent of this crate's manifest dir.
 pub fn repo_root() -> PathBuf {
@@ -34,6 +35,21 @@ pub fn run(cmd: &Path, args: &[String], cwd: &Path, env: Option<&HashMap<String,
     }
 }
 
+/// This process's environment as a map (lossy, so a non-UTF-8 value cannot panic).
+pub fn env_map() -> HashMap<String, String> {
+    std::env::vars_os()
+        .map(|(k, v)| (k.to_string_lossy().into(), v.to_string_lossy().into()))
+        .collect()
+}
+
+/// Print a subcommand's error and turn it into exit code 1.
+pub fn exit_code(result: Result<i32, String>) -> i32 {
+    result.unwrap_or_else(|err| {
+        eprintln!("{err}");
+        1
+    })
+}
+
 /// Rust's OS/arch names mapped to Node's `process.platform` / `process.arch`.
 pub fn node_name(os: &str, arch: &str) -> Result<(&'static str, &'static str), String> {
     let platform = match os {
@@ -59,6 +75,40 @@ pub fn prebuild_dir(platform: &str, arch: &str, musl: bool) -> String {
 pub fn host_dir() -> Result<String, String> {
     let (platform, arch) = node_name(std::env::consts::OS, std::env::consts::ARCH)?;
     Ok(prebuild_dir(platform, arch, cfg!(target_env = "musl")))
+}
+
+/// Run `cmd` to completion with captured stderr (stdout discarded), killing it once
+/// `limit` passes. `Ok(None)` means it was killed at the deadline.
+pub fn output_within(cmd: &mut Command, limit: Duration) -> std::io::Result<Option<Output>> {
+    use std::io::Read;
+    let mut child = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let mut pipe = child.stderr.take().expect("stderr is piped");
+    // read on a thread so a chatty child can never block on a full pipe
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        pipe.read_to_end(&mut buf).map(|_| buf)
+    });
+    let deadline = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let stderr = reader.join().expect("stderr reader")?;
+    Ok(status.map(|status| Output {
+        status,
+        stdout: Vec::new(),
+        stderr,
+    }))
 }
 
 #[cfg(test)]
@@ -105,13 +155,38 @@ mod tests {
 
     #[test]
     fn run_sets_the_given_env() {
-        let mut env: HashMap<String, String> = std::env::vars().collect();
+        let mut env = env_map();
         env.insert("XTASK_PROBE".to_string(), "yes".to_string());
         let args = vec![
             "-e".to_string(),
             "process.exit(process.env.XTASK_PROBE === 'yes' ? 0 : 1)".to_string(),
         ];
         assert_eq!(run(&node_exe(), &args, &repo_root(), Some(&env)), 0);
+    }
+
+    #[test]
+    fn output_within_returns_status_and_stderr_before_the_deadline() {
+        let mut cmd = Command::new(node_exe());
+        cmd.args(["-e", "process.stderr.write('boom'); process.exit(3)"]);
+        let out = output_within(&mut cmd, Duration::from_secs(20))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "boom");
+    }
+
+    #[test]
+    fn output_within_kills_a_child_past_the_deadline() {
+        let mut cmd = Command::new(node_exe());
+        cmd.args(["-e", "setTimeout(() => {}, 60000)"]);
+        let start = std::time::Instant::now();
+        let out = output_within(&mut cmd, Duration::from_millis(500)).unwrap();
+        assert!(out.is_none(), "a hung child must be reported as timed out");
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

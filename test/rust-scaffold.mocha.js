@@ -28,7 +28,7 @@ describe('rust scaffold', function () {
 
   it('routes the Rust npm scripts through cargo xtask and keeps no ported JS in scripts/', function () {
     const { scripts } = JSON.parse(read('package.json'));
-    expect(scripts['ci:rs']).to.equal('cargo xtask ci');
+    expect(scripts['ci:rs']).to.equal('cargo vet --locked && cargo xtask ci'); // vet before cargo builds xtask (KD4)
     expect(scripts['build:napi']).to.equal('cargo xtask build-napi');
     expect(scripts['ci:rs:package']).to.equal('cargo xtask package');
     expect(scripts['bench:startup']).to.equal('cargo xtask bench-startup');
