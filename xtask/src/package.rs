@@ -178,7 +178,7 @@ pub fn install_cells(
     env: &HashMap<String, String>,
 ) -> Vec<InstallCell> {
     let mut cell_env = env.clone();
-    cell_env.remove("WAIT_ON_NATIVE_LIBRARY_PATH");
+    host::env_remove(&mut cell_env, "WAIT_ON_NATIVE_LIBRARY_PATH");
     let npm_install = [
         npm_exec_path,
         "install",

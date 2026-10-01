@@ -42,6 +42,57 @@ pub fn env_map() -> HashMap<String, String> {
         .collect()
 }
 
+/// Windows env names are case-insensitive (`Path` is `PATH`); elsewhere they are exact.
+const FOLD_ENV_CASE: bool = cfg!(windows);
+
+fn env_key(env: &HashMap<String, String>, key: &str, fold: bool) -> Option<String> {
+    env.keys()
+        .find(|k| {
+            if fold {
+                k.eq_ignore_ascii_case(key)
+            } else {
+                *k == key
+            }
+        })
+        .cloned()
+}
+
+fn env_get_with<'a>(env: &'a HashMap<String, String>, key: &str, fold: bool) -> Option<&'a str> {
+    env_key(env, key, fold)
+        .and_then(|k| env.get(&k))
+        .map(String::as_str)
+}
+
+fn env_remove_with(env: &mut HashMap<String, String>, key: &str, fold: bool) {
+    env.retain(|k, _| {
+        if fold {
+            !k.eq_ignore_ascii_case(key)
+        } else {
+            k != key
+        }
+    });
+}
+
+fn env_set_with(env: &mut HashMap<String, String>, key: &str, value: &str, fold: bool) {
+    env_remove_with(env, key, fold);
+    env.insert(key.to_string(), value.to_string());
+}
+
+/// Look up `key` in an env map, ignoring case on Windows.
+pub fn env_get<'a>(env: &'a HashMap<String, String>, key: &str) -> Option<&'a str> {
+    env_get_with(env, key, FOLD_ENV_CASE)
+}
+
+/// Set `key`, first dropping any case variant of it on Windows so one value wins.
+pub fn env_set(env: &mut HashMap<String, String>, key: &str, value: &str) {
+    env_set_with(env, key, value, FOLD_ENV_CASE)
+}
+
+/// Remove `key` and, on Windows, every case variant of it.
+pub fn env_remove(env: &mut HashMap<String, String>, key: &str) {
+    env_remove_with(env, key, FOLD_ENV_CASE)
+}
+
 /// Print a subcommand's error and turn it into exit code 1.
 pub fn exit_code(result: Result<i32, String>) -> i32 {
     result.unwrap_or_else(|err| {
@@ -186,6 +237,53 @@ mod tests {
             start.elapsed() < Duration::from_secs(10),
             "{:?}",
             start.elapsed()
+        );
+    }
+
+    fn windows_like_env() -> HashMap<String, String> {
+        HashMap::from([
+            ("Path".to_string(), "C:\\bin".to_string()),
+            ("wait_on_engine".to_string(), "js".to_string()),
+        ])
+    }
+
+    #[test]
+    fn env_get_folds_case_only_when_asked() {
+        let env = windows_like_env();
+        assert_eq!(env_get_with(&env, "PATH", true), Some("C:\\bin"));
+        assert_eq!(env_get_with(&env, "PATH", false), None);
+        assert_eq!(env_get_with(&env, "Path", false), Some("C:\\bin"));
+    }
+
+    #[test]
+    fn env_set_replaces_a_case_variant_when_folding() {
+        let mut env = windows_like_env();
+        env_set_with(&mut env, "WAIT_ON_ENGINE", "rust-strict", true);
+        assert_eq!(
+            env.get("WAIT_ON_ENGINE").map(String::as_str),
+            Some("rust-strict")
+        );
+        assert!(!env.contains_key("wait_on_engine"), "{env:?}");
+        let mut exact = windows_like_env();
+        env_set_with(&mut exact, "WAIT_ON_ENGINE", "rust-strict", false);
+        assert!(exact.contains_key("wait_on_engine") && exact.contains_key("WAIT_ON_ENGINE"));
+    }
+
+    #[test]
+    fn env_remove_drops_every_case_variant_when_folding() {
+        let mut env = windows_like_env();
+        env_remove_with(&mut env, "PATH", true);
+        assert!(!env.contains_key("Path"), "{env:?}");
+        let mut exact = windows_like_env();
+        env_remove_with(&mut exact, "PATH", false);
+        assert!(exact.contains_key("Path"));
+    }
+
+    #[test]
+    fn env_get_finds_this_hosts_path_under_its_canonical_name() {
+        assert_eq!(
+            env_get(&env_map(), "PATH").map(String::from),
+            std::env::var("PATH").ok()
         );
     }
 
