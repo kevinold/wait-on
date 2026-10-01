@@ -181,6 +181,9 @@ behind it needs no run.
   PR; or mid-execution as soon as the learning appears.
 - **Mode:** headless runs (`/lfg` and other unattended runs) use
   `/ce-compound mode:non-interactive`; interactive sessions may run it bare.
+- **Vocabulary:** `CONCEPTS.md` (repo root) is the shared domain vocabulary (resources,
+  polls, reverse mode, ...), relevant when orienting to the codebase or discussing domain
+  concepts. Every `/ce-compound` run updates it with the terms its learning touches.
 
 ## What not to do
 
