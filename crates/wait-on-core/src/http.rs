@@ -65,8 +65,8 @@ impl HttpChecker {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let method = Method::from_bytes(opts.method.as_bytes()).map_err(|e| e.to_string())?;
-        let proxy = opts.proxy.as_deref().map(Proxy::all).transpose();
-        let proxy = proxy.map_err(|e| error_chain(&e))?;
+        let proxy =
+            (opts.proxy.as_deref().map(Proxy::all).transpose()).map_err(|e| error_chain(&e))?;
         let base = || {
             let mut b = Client::builder()
                 .no_proxy()
@@ -98,9 +98,12 @@ impl HttpChecker {
         let client = with_tls(base(), &opts)
             .and_then(ClientBuilder::build)
             // Bad TLS material fails every TLS hop, not construction (Node's per-connection error).
-            .or_else(|e| match has_tls {
-                true => base().tls_certs_only([]).build(),
-                false => Err(e),
+            .or_else(|e| {
+                if has_tls {
+                    base().tls_certs_only([]).build()
+                } else {
+                    Err(e)
+                }
             })
             .map_err(|e| error_chain(&e))?;
         Ok(Self {
@@ -469,11 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn connection_refused_is_not_ready() {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let port = closed_port();
         let out = checker(format!("http://127.0.0.1:{port}"), "HEAD", true, None)
             .check(None::<NoValidate>)
             .await;
