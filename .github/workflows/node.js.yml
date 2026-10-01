@@ -68,7 +68,7 @@ jobs:
     - uses: taiki-e/install-action@v2
       if: hashFiles('Cargo.toml') != ''
       with:
-        tool: cargo-deny,cargo-vet,cargo-llvm-cov,just
+        tool: cargo-deny,cargo-vet,cargo-llvm-cov
     - run: npm ci --engine-strict
     - run: npm run --if-present ci:rs
 
@@ -99,9 +99,6 @@ jobs:
         key: ${{ matrix.target }}
     - uses: mlugg/setup-zig@v2
       if: matrix.zig && hashFiles('Cargo.toml') != ''
-    - uses: taiki-e/install-action@v2
-      with:
-        tool: just
     - run: npm ci --engine-strict
     - run: npm run --if-present build:napi -- --target ${{ matrix.target }} ${{ matrix.extra-args }}
     - uses: actions/upload-artifact@v7
@@ -129,9 +126,6 @@ jobs:
         pattern: prebuilds-*
         path: prebuilds
         merge-multiple: true
-    - uses: taiki-e/install-action@v2
-      with:
-        tool: just
     - run: npm ci --engine-strict
     - run: npm run --if-present ci:rs:package
     - uses: actions/upload-artifact@v7

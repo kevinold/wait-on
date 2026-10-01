@@ -26,6 +26,7 @@ engine stays the default; the Rust engine is opt-in via `WAIT_ON_ENGINE=rust`
 (selected and loaded in `lib/engine.js`; Rust code in `crates/`), and both must pass the
 same mocha suites, with tests Rust cannot pass yet listed in `test/rust-pending.js`. Spine lanes never edit `.github/workflows/`; they change
 CI behavior through the `ci:rs`, `build:napi`, and `ci:rs:package` npm scripts. The
+Rust-side tooling behind those scripts is `cargo xtask` (crate `xtask/`). The
 developer manual is [`docs/guides/README.md`](docs/guides/README.md).
 
 ## Architecture
@@ -78,7 +79,8 @@ has syntax worth failing fast on.
 ## Commands
 
 - `npm test` — the full check: `npm run lint && npm run test:types && npm run test:mocha`.
-- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `bin/wait-on`
+- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `benchmarks/**/*.js`,
+  `xtask/**/*.js`, `bin/wait-on`
   (flat config `eslint.config.mjs`).
 - `npm run test:mocha` — `mocha --exit "test/**/*.mocha.js"` (`--exit` is required: spun-up
   test servers leave open handles).

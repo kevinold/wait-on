@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/wait-on-core", "crates/wait-on-napi"]
+members = ["crates/wait-on-core", "crates/wait-on-napi", "xtask"]
 resolver = "2"
 
 [workspace.package]

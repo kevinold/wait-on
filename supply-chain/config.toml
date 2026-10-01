@@ -131,6 +131,11 @@ version = "0.2.17"
 criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
+[[exemptions.hashbrown]]
+version = "0.17.1"
+criteria = "safe-to-deploy"
+notes = "Imported audits reach 0.17.1 only through an unaudited 0.14.0 to 0.14.2 diff."
+
 [[exemptions.http]]
 version = "1.5.0"
 criteria = "safe-to-deploy"
@@ -205,6 +210,11 @@ notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
 version = "1.2.2"
 criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 1.2.1; the diff is not yet audited."
+
+[[exemptions.indexmap]]
+version = "2.14.2"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.14.0; the diff is not yet audited."
 
 [[exemptions.ipnet]]
 version = "2.12.2"
@@ -405,6 +415,11 @@ notes = "Newer than the imported audit of 1.0.228; the diff is not yet audited."
 version = "1.0.229"
 criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 1.0.228; the diff is not yet audited."
+
+[[exemptions.serde_json]]
+version = "1.0.151"
+criteria = "safe-to-deploy"
+notes = "No imported audit of serde_json; a full inspection is not yet done."
 
 [[exemptions.simd_cesu8]]
 version = "1.2.0"
@@ -675,3 +690,8 @@ notes = "Newer than the imported audit of 0.11.4; the diff is not yet audited."
 version = "0.11.6"
 criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 0.11.2; the diff is not yet audited."
+
+[[exemptions.zmij]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.21; the diff is not yet audited."

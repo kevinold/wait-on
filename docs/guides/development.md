@@ -19,19 +19,23 @@ npm test
 
 | Command | Does | Status |
 |---|---|---|
-| `npm run lint` | eslint over `lib/**/*.js`, `test/**/*.js`, `scripts/**/*.js`, `benchmarks/**/*.js`, `bin/wait-on` | exists |
+| `npm run lint` | eslint over `lib/**/*.js`, `test/**/*.js`, `benchmarks/**/*.js`, `xtask/**/*.js`, `bin/wait-on` | exists |
 | `npm test` | `lint` + `test:types` + `test:mocha` | exists |
 | `npm run test:mocha` | `mocha --exit "test/**/*.mocha.js"` | exists |
 | `npm run test:types` | `tsc -p test/tsconfig.json` (type tests for `index.d.ts`) | exists |
 | `npm run test:coverage` | nyc + mocha, thresholds from `.nycrc.json` | exists |
-| `npm run ci:rs` | Rust gate on the host: `cargo vet --locked` first (in the `package.json` entry), then `scripts/ci-rs.js`: fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark | exists |
-| `npm run bench:startup [-- --runs N] [--record]` | startup overhead of the Rust engine over JS (`scripts/bench-startup.js`); needs a host prebuild; `--record` rewrites this host's entry in `benchmarks/startup-baseline.json` | exists (L8) |
-| `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`scripts/build-napi.js`) | exists |
+| `npm run ci:rs` | `cargo vet --locked && cargo xtask ci` (vet runs before cargo builds xtask), the Rust gate on the host: `cargo vet --locked`, fmt, clippy `-D warnings`, `cargo test`, `cargo deny check`, host addon, mocha under `rust-strict`, then the startup benchmark; stops at the first failure | exists |
+| `npm run bench:startup [-- --runs N] [--record]` | startup overhead of the Rust engine over JS (`cargo xtask bench-startup`); needs a host prebuild; `--record` rewrites this host's entry in `benchmarks/startup-baseline.json` | exists (L8) |
+| `npm run build:napi [-- --target <triple> [-x]]` | build the host (or one target's) addon into `prebuilds/` (`cargo xtask build-napi`; `--target` without a value is an error) | exists |
 | `cargo llvm-cov -p wait-on-core --summary-only --ignore-filename-regex '(waiter/tests\.rs\|/tests/)'` | line and region coverage of `wait-on-core` without the test bodies; loop code stays at 100% ([testing.md](testing.md#rust-coverage)); CI enforcement is L13 | exists (local) |
 | `node benchmarks/http-ffi.js [--iterations N] [--engines js,rust-strict]` | per-check http overhead, JS vs Rust (Rust rows need a host prebuild) | exists |
-| `npm run ci:rs:package [-- --host-only]` | pack, install-matrix and container checks, size report ([ci.md](ci.md#cirspackage)); `--host-only` needs only the host prebuild | exists |
+| `npm run ci:rs:package [-- --host-only]` | `cargo xtask package`: pack, install-matrix and container checks, size report ([ci.md](ci.md#cirspackage)); `--host-only` needs only the host prebuild | exists |
 
 Hook inputs and outputs: [ci.md](ci.md#npm-script-hook-contract).
+
+## xtask
+
+The Rust-side tooling is `cargo xtask` (crate `xtask/`, alias in `.cargo/config.toml`); the npm scripts above call it. `cargo xtask --help` lists the eight subcommands: `ci`, `fmt`, `lint`, `test`, `cov` (`cargo llvm-cov --workspace`, needs `cargo-llvm-cov`), `build-napi`, `package`, `bench-startup`. Run `package` through `npm run ci:rs:package`. Its tests: `cargo test -p xtask` (needs `node` on `PATH`; the `npm pack` test skips unless run through npm). `xtask/assets/prebuild-probe.js` stays JS because it runs under Node inside installed packages and containers. The cargo calls xtask makes itself (`ci`, `fmt`, `lint`, `test`, `cov`) build into `target/xtask-inner/` (or `$CARGO_TARGET_DIR/xtask-inner`), so they never relink the running `xtask` binary, which Windows locks.
 
 ## Vetting a new or bumped crate
 
