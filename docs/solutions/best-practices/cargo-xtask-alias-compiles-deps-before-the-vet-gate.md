@@ -12,7 +12,7 @@ applies_when:
   - Changing the ci:rs script line or the .cargo/config.toml xtask alias
 root_cause: config_error
 resolution_type: config_change
-related_components: [package.json, .cargo/config.toml, xtask/src/ci.rs, test/rust-scaffold.mocha.js, supply-chain]
+related_components: [package.json, .cargo/config.toml, xtask/src/ci.rs, supply-chain]
 tags: [cargo-vet, xtask, supply-chain, ci, build-scripts, porting, codex-review, spike-next-rs]
 ---
 
@@ -31,7 +31,7 @@ The in-process reviewers and the lane's own tests missed it. They checked that v
 3. Vet only needs `Cargo.lock` and `supply-chain/`, so run it in the npm line before cargo touches xtask. It also stays first inside `ci` so a direct `cargo xtask ci` still vets:
    - `package.json`: `"ci:rs": "cargo vet --locked && cargo xtask ci"`
    - `xtask/src/ci.rs` `steps()` starts with `Step::Cargo(strings(&["vet", "--locked"]))`. That step is a convenience for direct runs. It is not the gate.
-4. Pin the npm line in a test, because the xtask unit test cannot see it. `test/rust-scaffold.mocha.js` asserts that `scripts['ci:rs']` equals `'cargo vet --locked && cargo xtask ci'`, and it pins the alias. The ordering test in `xtask/src/ci.rs` (`ci_runs_vet_fmt_lint_test_deny_build_mocha_then_bench`) would still pass with the gate in the wrong place, because it only compares the step list.
+4. The npm line was pinned by `test/rust-scaffold.mocha.js` until L14 (#91) deleted it: the operator ruled that asserting `package.json` script strings and the alias restates config, not behaviour. Review the `ci:rs` line by hand when it changes. The ordering test in `xtask/src/ci.rs` (`ci_runs_vet_fmt_lint_test_deny_build_mocha_then_bench`) would still pass with the gate in the wrong place, because it only compares the step list.
 5. When porting a script, check where the gate sits in the execution timeline, not only in the step list. Ask what has to be compiled or run before the gate gets control.
 
 ## Why This Matters
