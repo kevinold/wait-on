@@ -20,6 +20,11 @@ describe('rust scaffold', function () {
     expect(fs.existsSync(path.join(root, 'Cargo.lock'))).to.equal(true);
   });
 
+  it('installs llvm-tools-preview for the coverage gate', function () {
+    const components = /^\s*components\s*=\s*\[([^\]]*)\]/m.exec(read('rust-toolchain.toml'));
+    expect(components && components[1]).to.include('"llvm-tools-preview"');
+  });
+
   it('registers the xtask crate and the cargo xtask alias', function () {
     expect(read('Cargo.toml')).to.match(/members\s*=\s*\[[^\]]*"xtask"/);
     expect(read('.cargo/config.toml')).to.match(/^\s*xtask\s*=\s*"run --package xtask --"/m);
@@ -28,7 +33,10 @@ describe('rust scaffold', function () {
 
   it('routes the Rust npm scripts through cargo xtask and keeps no ported JS in scripts/', function () {
     const { scripts } = JSON.parse(read('package.json'));
-    expect(scripts['ci:rs']).to.equal('cargo vet --locked && cargo xtask ci'); // vet before cargo builds xtask (KD4)
+    // vet before cargo builds xtask (KD4); the 100% coverage gate runs last (L13 KTD1)
+    expect(scripts['ci:rs']).to.equal(
+      'cargo vet --locked && cargo xtask ci && cargo xtask cov --exclude xtask --fail-under-lines 100 --fail-under-regions 100',
+    );
     expect(scripts['build:napi']).to.equal('cargo xtask build-napi');
     expect(scripts['ci:rs:package']).to.equal('cargo xtask package');
     expect(scripts['bench:startup']).to.equal('cargo xtask bench-startup');
