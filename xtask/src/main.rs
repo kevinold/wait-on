@@ -1,5 +1,6 @@
 //! `cargo xtask <subcommand>`: repo tooling too large for a Justfile recipe.
 
+mod bench;
 mod build_napi;
 mod host;
 
@@ -11,7 +12,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("build-napi") => build_napi::run(&args[1..]),
-        Some(cmd @ ("package" | "bench-startup")) => {
+        Some("bench-startup") => bench::run(&args[1..]),
+        Some(cmd @ "package") => {
             eprintln!("{cmd}: not implemented yet");
             2
         }

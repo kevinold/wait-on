@@ -40,3 +40,18 @@ fn unknown_subcommand_is_named_and_exits_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("frobnicate"));
 }
+
+#[test]
+fn bench_startup_names_the_addon_when_the_rust_engine_cannot_load() {
+    let missing = std::env::temp_dir().join(format!("wait-on-missing-{}.node", std::process::id()));
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["bench-startup", "--runs", "1"])
+        .env("WAIT_ON_NATIVE_LIBRARY_PATH", &missing)
+        .output()
+        .expect("spawn xtask");
+    assert_ne!(out.status.code(), Some(0));
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("rust-strict"), "{text}");
+    assert!(text.contains(&*missing.to_string_lossy()), "{text}");
+}
