@@ -1,0 +1,677 @@
+
+# cargo-vet config file
+
+[cargo-vet]
+version = "0.10"
+
+[imports.bytecode-alliance]
+url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+[imports.embark-studios]
+url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
+
+[imports.google]
+url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+exclude = ["quote"]
+
+[imports.isrg]
+url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/audits.toml"
+
+[imports.mozilla]
+url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[imports.zcash]
+url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
+
+[imports.zcash-foundation]
+url = "https://raw.githubusercontent.com/ZcashFoundation/zebra/main/supply-chain/audits.toml"
+
+[[exemptions.base64]]
+version = "0.23.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.22.1; the diff is not yet audited."
+
+[[exemptions.bitflags]]
+version = "2.13.2"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.11.1; the diff is not yet audited."
+
+[[exemptions.bytes]]
+version = "1.12.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.cc]]
+version = "1.5.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.2.5; the diff is not yet audited."
+
+[[exemptions.cfg-if]]
+version = "1.0.5"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.4; the diff is not yet audited."
+
+[[exemptions.combine]]
+version = "4.6.8"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.convert_case]]
+version = "0.12.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.4.0; the diff is not yet audited."
+
+[[exemptions.core-foundation]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.10.0; the diff is not yet audited."
+
+[[exemptions.ctor]]
+version = "1.0.13"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.displaydoc]]
+version = "0.2.7"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.2.5; the diff is not yet audited."
+
+[[exemptions.find-msvc-tools]]
+version = "0.1.14"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.futures]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-channel]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-core]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-executor]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-io]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-macro]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-sink]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.3.31; the diff is not yet audited."
+
+[[exemptions.futures-task]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.futures-util]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.getrandom]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.http]]
+version = "1.5.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.0; the diff is not yet audited."
+
+[[exemptions.http-body]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.1; the diff is not yet audited."
+
+[[exemptions.http-body-util]]
+version = "0.1.5"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.2; the diff is not yet audited."
+
+[[exemptions.httparse]]
+version = "1.10.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.hyper]]
+version = "1.11.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.hyper-rustls]]
+version = "0.27.10"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.hyper-util]]
+version = "0.1.21"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.icu_collections]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.icu_locale_core]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.icu_normalizer]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.icu_normalizer_data]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.icu_properties]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.2; the diff is not yet audited."
+
+[[exemptions.icu_properties_data]]
+version = "2.3.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.2; the diff is not yet audited."
+
+[[exemptions.icu_provider]]
+version = "2.3.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.idna_adapter]]
+version = "1.2.2"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.2.1; the diff is not yet audited."
+
+[[exemptions.ipnet]]
+version = "2.12.2"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.itoa]]
+version = "1.0.18"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.15; the diff is not yet audited."
+
+[[exemptions.jni]]
+version = "0.22.4"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.21.1; the diff is not yet audited."
+
+[[exemptions.jni-macros]]
+version = "0.22.4"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.jni-sys]]
+version = "0.4.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.jni-sys-macros]]
+version = "0.4.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.js-sys]]
+version = "0.3.106"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.libc]]
+version = "0.2.189"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.litemap]]
+version = "0.8.3"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.8.1; the diff is not yet audited."
+
+[[exemptions.log]]
+version = "0.4.34"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.4.29; the diff is not yet audited."
+
+[[exemptions.memchr]]
+version = "2.8.3"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.mio]]
+version = "1.2.3"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.napi]]
+version = "3.13.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.napi-build]]
+version = "2.5.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.napi-derive]]
+version = "3.6.9"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.napi-derive-backend]]
+version = "6.1.4"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.napi-sys]]
+version = "3.3.2"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.once_cell]]
+version = "1.21.4"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.openssl-probe]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.5; the diff is not yet audited."
+
+[[exemptions.pin-project-lite]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.2.16; the diff is not yet audited."
+
+[[exemptions.potential_utf]]
+version = "0.1.6"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.4; the diff is not yet audited."
+
+[[exemptions.proc-macro2]]
+version = "1.0.107"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.106; the diff is not yet audited."
+
+[[exemptions.quote]]
+version = "1.0.47"
+criteria = "safe-to-deploy"
+notes = "Google's quote audits are excluded from the import: their notes contain double quotes that cargo-vet 0.10.0 (CI) and 0.10.2 format differently, which fails `cargo vet --locked` on one of them. Not yet audited here."
+
+[[exemptions.reqwest]]
+version = "0.13.5"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.ring]]
+version = "0.17.14"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustc-hash]]
+version = "2.1.3"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.1.1; the diff is not yet audited."
+
+[[exemptions.rustls]]
+version = "0.23.45"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustls-native-certs]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustls-pki-types]]
+version = "1.15.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustls-platform-verifier]]
+version = "0.7.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustls-platform-verifier-android]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustls-webpki]]
+version = "0.103.15"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.rustversion]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.22; the diff is not yet audited."
+
+[[exemptions.same-file]]
+version = "1.0.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.schannel]]
+version = "0.1.29"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.security-framework]]
+version = "3.7.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.security-framework-sys]]
+version = "2.17.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.serde]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.228; the diff is not yet audited."
+
+[[exemptions.serde_core]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.228; the diff is not yet audited."
+
+[[exemptions.serde_derive]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.228; the diff is not yet audited."
+
+[[exemptions.simd_cesu8]]
+version = "1.2.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.slab]]
+version = "0.4.12"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.4.8; the diff is not yet audited."
+
+[[exemptions.smallvec]]
+version = "1.16.2"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.15.2; the diff is not yet audited."
+
+[[exemptions.socket2]]
+version = "0.6.5"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.stable_deref_trait]]
+version = "1.2.1"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.2.0; the diff is not yet audited."
+
+[[exemptions.syn]]
+version = "2.0.119"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.syn]]
+version = "3.0.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.sync_wrapper]]
+version = "1.0.2"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.synstructure]]
+version = "0.14.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.13.2; the diff is not yet audited."
+
+[[exemptions.thiserror]]
+version = "2.0.21"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.69; the diff is not yet audited."
+
+[[exemptions.thiserror-impl]]
+version = "2.0.21"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.69; the diff is not yet audited."
+
+[[exemptions.tinystr]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.8.1; the diff is not yet audited."
+
+[[exemptions.tokio]]
+version = "1.53.1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tokio-macros]]
+version = "2.7.2"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tokio-rustls]]
+version = "0.26.6"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.24.0; the diff is not yet audited."
+
+[[exemptions.tower]]
+version = "0.5.3"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tower-http]]
+version = "0.6.11"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tower-layer]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tower-service]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.tracing]]
+version = "0.1.44"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.41; the diff is not yet audited."
+
+[[exemptions.tracing-core]]
+version = "0.1.36"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.34; the diff is not yet audited."
+
+[[exemptions.unicode-ident]]
+version = "1.0.26"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.18; the diff is not yet audited."
+
+[[exemptions.untrusted]]
+version = "0.9.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.7.1; the diff is not yet audited."
+
+[[exemptions.url]]
+version = "2.5.8"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 2.5.7; the diff is not yet audited."
+
+[[exemptions.walkdir]]
+version = "2.5.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.wasi]]
+version = "0.11.1+wasi-snapshot-preview1"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.wasm-bindgen]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.wasm-bindgen-futures]]
+version = "0.4.79"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.wasm-bindgen-macro]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.wasm-bindgen-macro-support]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.2.92; the diff is not yet audited."
+
+[[exemptions.wasm-bindgen-shared]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.2.92; the diff is not yet audited."
+
+[[exemptions.web-sys]]
+version = "0.3.106"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.webpki-root-certs]]
+version = "1.0.9"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.0.4; the diff is not yet audited."
+
+[[exemptions.winapi-util]]
+version = "0.1.11"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows-sys]]
+version = "0.52.0"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows-sys]]
+version = "0.61.2"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows-targets]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_aarch64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_i686_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_i686_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_i686_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_x86_64_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.windows_x86_64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "No imported audit covers this version or an older base to diff from."
+
+[[exemptions.writeable]]
+version = "0.6.4"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.6.2; the diff is not yet audited."
+
+[[exemptions.yoke]]
+version = "0.8.3"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.8.0; the diff is not yet audited."
+
+[[exemptions.yoke-derive]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.8.1; the diff is not yet audited."
+
+[[exemptions.zerofrom]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.6; the diff is not yet audited."
+
+[[exemptions.zerofrom-derive]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.1.6; the diff is not yet audited."
+
+[[exemptions.zeroize]]
+version = "1.9.0"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 1.8.2; the diff is not yet audited."
+
+[[exemptions.zerotrie]]
+version = "0.2.5"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.2.2; the diff is not yet audited."
+
+[[exemptions.zerovec]]
+version = "0.11.8"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.11.4; the diff is not yet audited."
+
+[[exemptions.zerovec-derive]]
+version = "0.11.6"
+criteria = "safe-to-deploy"
+notes = "Newer than the imported audit of 0.11.2; the diff is not yet audited."
