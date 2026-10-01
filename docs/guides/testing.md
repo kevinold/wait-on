@@ -23,7 +23,6 @@ mocha + chai, `test/**/*.mocha.js`, run with `npm run test:mocha` (`--exit` is r
 | `test/engine.mocha.js` | `WAIT_ON_ENGINE` selection, fallback and errors (API and CLI), the `wait`-less addon as a load failure, prebuild path resolution, the real addon's `fileSize`, `runCommand` and `HttpChecker`, the real addon's `wait` (lines, timeout message, absent optional fields, unknown kind), http dispatch and the whole-wait carve-outs (counting fixture), the Rust shim's spec and timeout delivery (fake addon, API and CLI), module graph per engine, process lifetime with a hung http server, `NODE_EXTRA_CA_CERTS` |
 | `test/engine-checks.mocha.js` | tcp under the real addon (skips without a host prebuild): Rust's `--verbose` reason text (CLI), a spec napi rejects (port above 65535) reaching the callback, the overall timeout firing while a connect is pending |
 | `test/benchmarks.mocha.js` | `benchmarks/http-ffi.js` helpers and smoke runs |
-| `test/rust-pending.mocha.js` | the Rust pending list hooks (fixture specs in a mocha subprocess) |
 | `xtask` `#[test]`s | `cargo test -p xtask`: unit tests in `xtask/src/*.rs` (`ci` step order, `build-napi` planning, `package` guards, `bench-startup` median/verdict/record); binary tests in `xtask/tests/cli.rs` (`--help`, dispatch, fail-loud paths, `hooks` in a temp repo); `xtask/tests/commit_msg_hook.rs` (good/bad message table run through `git hook run` against `.githooks/commit-msg`; skips without git 2.36+ locally, fails on CI); `xtask/tests/commitlint_config.rs` (`commitlint.config.js` ignores evaluated by node). Needs `node` on `PATH`, the `npm pack` test skips unless run through npm |
 | `test/prebuild-probe.mocha.js` | `xtask/assets/prebuild-probe.js`, the probe `ci:rs:package` runs inside installed packages |
 | `test/rust-scaffold.mocha.js` | toolchain pin equals the workspace MSRV; `Cargo.lock` committed |
@@ -74,7 +73,7 @@ The last `describe` in `test/parser-properties.mocha.js` feeds every golden, rej
 - Stay on the real clock (plain `it`) for `command:` resources, `tcpTimeout`/`httpTimeout`, socket teardown, resources changed by a real `setTimeout`, and CLI subprocess tests.
 - Don't use node:test `mock.timers`: it breaks rxjs on Node 22.19.
 - Use `FROZEN_NOW`, never bare `new Date()`, in fixtures.
-- The pump cannot advance a Rust timer: under `rust*` an `itFrozen` test runs the wait in real time within its budget (raise a `describe` budget, never add a pending entry). The one test of the mechanism itself (`test/frozen-clock.mocha.js`, 5000 ms virtual in under 2000 ms real) pins `WAIT_ON_ENGINE: 'js'` with `withEnv`.
+- The pump cannot advance a Rust timer: under `rust*` an `itFrozen` test runs the wait in real time within its budget (raise a `describe` budget). The one test of the mechanism itself (`test/frozen-clock.mocha.js`, 5000 ms virtual in under 2000 ms real) pins `WAIT_ON_ENGINE: 'js'` with `withEnv`.
 - Rust loop tests use tokio's paused clock instead (`start_paused = true`, `advance`).
 
 ## Windows notes
@@ -99,7 +98,3 @@ cargo llvm-cov -p wait-on-core --summary-only --ignore-filename-regex '(waiter/t
 ```
 
 CI does not enforce the number yet; that lands in lane L13.
-
-## Rust pending list
-
-[`test/rust-pending.js`](../../test/rust-pending.js) lists tests that cannot pass on Rust yet, by mocha full title (describe titles and test title, space-joined). It is empty today (L2 moved `tcp:`/`socket:` to Rust with no entries). Its root hooks are composed into `test/frozen-clock.js`, the root-hook plugin `.mocharc.json` already loads. Under `WAIT_ON_ENGINE=rust` or `rust-strict`, a listed test reports pending, and a listed title that no suite registers fails the run so stale entries cannot pile up. Under JS the list has no effect. Each lane shrinks it; it must be empty before the spike PR leaves draft.

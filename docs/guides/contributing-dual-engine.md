@@ -5,7 +5,7 @@
 1. Decide which engine(s) it touches. Behavior visible through `waitOn` or the CLI must end up identical on both; JS stays authoritative.
 2. Tests first, per [AGENTS.md](../../AGENTS.md#test-driven-development-mandatory). The mocha suites are the shared contract; don't fork tests per engine.
 3. Run the suites under both drivers (see [testing.md](testing.md#running-under-each-engine)).
-4. Shrink the Rust pending list for anything the change makes pass on Rust; never grow it without a reason in the PR.
+4. Every suite passes under each engine; there is no pending list, so a test Rust cannot pass blocks the change.
 5. `npm test` green; `ci:rs` green once it exists.
 6. Update the guides (checklist below) in the same PR.
 7. Commit messages follow [AGENTS.md › Commit messages](../../AGENTS.md#commit-messages); `cargo xtask hooks` enables the local check.
@@ -22,7 +22,7 @@ A lane is not done until the pages it affects are current and every planned-stat
 
 - [ ] [architecture.md](architecture.md): layout, resource checks moved to Rust, loader, engine selection.
 - [ ] [development.md](development.md): commands table rows, prerequisites, building and running each engine.
-- [ ] [testing.md](testing.md): dual-engine runs, pending list, new suites.
+- [ ] [testing.md](testing.md): dual-engine runs, new suites.
 - [ ] [ci.md](ci.md): hook scripts now defined, what they produce.
 - [ ] [releasing.md](releasing.md): prerelease verification, install steps.
 - [ ] [README.md](README.md): the model, if it changed.

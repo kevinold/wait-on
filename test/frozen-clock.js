@@ -188,10 +188,7 @@ function itFrozen(title, fn) {
 
 // Defensive net: if a test somehow leaves the virtual clock installed, restore it before the
 // next test runs.
-// .mocharc.json loads this file as the root-hook plugin, so the Rust pending list's
-// hooks are composed in here.
 const mochaHooks = {
-  ...require('./rust-pending').mochaHooks,
   afterEach() {
     if (activeClock) {
       activeClock.uninstall();
