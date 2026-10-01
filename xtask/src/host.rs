@@ -55,9 +55,28 @@ pub fn prebuild_dir(platform: &str, arch: &str, musl: bool) -> String {
     format!("{platform}-{arch}{}", if musl { "-musl" } else { "" })
 }
 
+/// This host's prebuild dir, as `lib/engine.js` names it.
+#[allow(dead_code)] // ponytail: first caller is package --host-only (U4)
+pub fn host_dir() -> Result<String, String> {
+    let (platform, arch) = node_name(std::env::consts::OS, std::env::consts::ARCH)?;
+    Ok(prebuild_dir(platform, arch, cfg!(target_env = "musl")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_dir_matches_node() {
+        let js = "process.platform + '-' + process.arch + \
+            (process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime ? '-musl' : '')";
+        let out = Command::new(node_exe()).args(["-p", js]).output().unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            host_dir(),
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        );
+    }
 
     fn node_exit(code: i32) -> i32 {
         let args = vec!["-e".to_string(), format!("process.exit({code})")];

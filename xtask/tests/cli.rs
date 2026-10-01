@@ -18,6 +18,23 @@ fn no_subcommand_prints_usage_and_exits_2() {
 }
 
 #[test]
+fn build_napi_rejects_an_unknown_target_before_spawning_napi() {
+    let out = xtask(&["build-napi", "--target", "riscv64gc-unknown-linux-gnu"]);
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for triple in [
+        "riscv64gc-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+    ] {
+        assert!(
+            stderr.contains(triple),
+            "stderr should name {triple}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn unknown_subcommand_is_named_and_exits_2() {
     let out = xtask(&["frobnicate"]);
     assert_eq!(out.status.code(), Some(2));

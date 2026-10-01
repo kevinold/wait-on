@@ -1,6 +1,6 @@
 //! `cargo xtask <subcommand>`: repo tooling too large for a Justfile recipe.
 
-#[allow(dead_code)] // callers land with build-napi (U2)
+mod build_napi;
 mod host;
 
 use std::process::ExitCode;
@@ -10,7 +10,8 @@ const USAGE: &str = "usage: cargo xtask <build-napi|package|bench-startup> [args
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        Some(cmd @ ("build-napi" | "package" | "bench-startup")) => {
+        Some("build-napi") => build_napi::run(&args[1..]),
+        Some(cmd @ ("package" | "bench-startup")) => {
             eprintln!("{cmd}: not implemented yet");
             2
         }
