@@ -293,7 +293,9 @@ async fn growing_file_stabilizes_one_window_after_its_last_change() {
     };
     advance(50 * MS).await;
     settle(|| stats() == 4).await;
-    breathe(50).await;
+    // Barrier for the 151 ms stat (its line is logged before the stat runs): a paused-clock
+    // sleep cannot fire while that spawn_blocking task is outstanding. 152 ms < the 201 ms tick.
+    tokio::time::sleep(MS).await;
     f.write(3);
     assert_eq!(run.await.unwrap(), Ok(()));
     let during =
@@ -329,7 +331,10 @@ async fn reverse_file_is_ready_once_removed_with_no_window() {
     settle(|| text(&lines).len() == 2).await;
     advance(100 * MS).await;
     settle(|| text(&lines).len() == 3).await;
-    advance(49 * MS).await;
+    // The 101 ms "checking file stat" line is logged before its spawn_blocking stat runs, so
+    // removing the file now could race that stat. A paused-clock sleep (unlike advance) cannot
+    // fire while a blocking task is outstanding, so the removal lands after the stat.
+    tokio::time::sleep(49 * MS).await;
     std::fs::remove_file(&f.0).unwrap();
     assert_eq!(run.await.unwrap(), Ok(()));
     let lines = timed(&lines);
