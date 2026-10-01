@@ -15,10 +15,7 @@ fn roots(name: &str) -> Option<Vec<String>> {
 async fn https_forward_verified_roots_ready() {
     let srv = serve(Some(OK_CLOSE), Some(tls(false)));
     let r = http_with(&srv.url, |o| o.roots = roots("ca.pem"));
-    let (sink, lines) = recorder(true);
-    let ok = result_line(&srv.url, 200, "OK", true);
-    let run = first_check(spec(vec![r]), sink, &lines, || has(&lines, &ok)).await;
-    assert_eq!(run.await.unwrap(), Ok(()));
+    ready(r, false, &result_line(&srv.url, 200, "OK", true)).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -40,10 +37,7 @@ async fn https_forward_wrong_roots_times_out() {
 async fn https_forward_no_roots_accepts_any_cert() {
     let srv = serve(Some(OK_CLOSE), Some(tls(false)));
     let r = http_with(&srv.url, |o| o.roots = None);
-    let (sink, lines) = recorder(true);
-    let ok = result_line(&srv.url, 200, "OK", true);
-    let run = first_check(spec(vec![r]), sink, &lines, || has(&lines, &ok)).await;
-    assert_eq!(run.await.unwrap(), Ok(()));
+    ready(r, false, &result_line(&srv.url, 200, "OK", true)).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -54,10 +48,7 @@ async fn https_forward_mtls_identity_ready() {
         o.cert = Some(pem("client.pem"));
         o.key = Some(pem("client-key.pem"));
     });
-    let (sink, lines) = recorder(true);
-    let ok = result_line(&srv.url, 200, "OK", true);
-    let run = first_check(spec(vec![r]), sink, &lines, || has(&lines, &ok)).await;
-    assert_eq!(run.await.unwrap(), Ok(()));
+    ready(r, false, &result_line(&srv.url, 200, "OK", true)).await;
     // the server saw the request only after verifying the client certificate
     assert_eq!(text(&srv.heads).len(), 1);
 }
@@ -102,16 +93,9 @@ async fn https_forward_garbage_roots_fail_tls_hop_only() {
 #[tokio::test(start_paused = true)]
 async fn https_forward_http_redirect_to_https_follows() {
     let srv = serve(Some(OK_CLOSE), Some(tls(false)));
-    let hop = format!(
-        "HTTP/1.1 302 Found\r\nLocation: {}/ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        srv.url
-    );
-    let (start, _seen) = server(Some(hop.leak()));
+    let (start, _seen) = server(Some(redirect_to(&format!("{}/ok", srv.url))));
     let r = http_with(&start, |o| o.roots = roots("ca.pem"));
-    let (sink, lines) = recorder(true);
-    let ok = result_line(&start, 200, "OK", true);
-    let run = first_check(spec(vec![r]), sink, &lines, || has(&lines, &ok)).await;
-    assert_eq!(run.await.unwrap(), Ok(()));
+    ready(r, false, &result_line(&start, 200, "OK", true)).await;
     let heads = text(&srv.heads);
     assert!(heads[0].starts_with("GET /ok "), "{heads:?}");
 }

@@ -40,11 +40,11 @@ pub fn text(lines: &Lines) -> Vec<String> {
 }
 
 pub fn has(lines: &Lines, line: &str) -> bool {
-    text(lines).iter().any(|l| l == line)
+    lines.lock().unwrap().iter().any(|l| l == line)
 }
 
 pub fn logged(lines: &Lines, prefix: &str) -> bool {
-    text(lines).iter().any(|l| l.starts_with(prefix))
+    lines.lock().unwrap().iter().any(|l| l.starts_with(prefix))
 }
 
 pub fn spec(resources: Vec<Resource>) -> WaitSpec {
@@ -130,9 +130,9 @@ pub fn serve(reply: Option<&'static str>, tls: Option<Arc<ServerConfig>>) -> Ser
             std::thread::spawn(move || match tls {
                 Some(cfg) => {
                     let conn = ServerConnection::new(cfg).unwrap();
-                    respond(StreamOwned::new(conn, s), i, reply, &tx, &rec);
+                    respond(StreamOwned::new(conn, s), i, reply, Some(&tx), &rec);
                 }
-                None => respond(s, i, reply, &tx, &rec),
+                None => respond(s, i, reply, Some(&tx), &rec),
             });
         }
     });
@@ -145,27 +145,50 @@ pub fn respond(
     mut s: impl Read + Write,
     i: usize,
     reply: Option<&str>,
-    tx: &Sender<Seen>,
+    tx: Option<&Sender<Seen>>,
     heads: &Lines,
 ) {
-    let (mut head, mut buf) = (Vec::new(), [0u8; 1024]);
-    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-        match s.read(&mut buf) {
-            Ok(0) | Err(_) => return,
-            Ok(n) => head.extend_from_slice(&buf[..n]),
-        }
-    }
+    let Some(head) = read_head(&mut s) else {
+        return;
+    };
     heads
         .lock()
         .unwrap()
         .push(String::from_utf8_lossy(&head).into_owned());
-    let _ = tx.send(Seen::Head(i));
+    let send = |e| {
+        if let Some(tx) = tx {
+            let _ = tx.send(e);
+        }
+    };
+    send(Seen::Head(i));
     if let Some(r) = reply {
         let _ = s.write_all(r.as_bytes());
         let _ = s.flush();
     }
+    let mut buf = [0u8; 1024];
     while let Ok(1..) = s.read(&mut buf) {}
-    let _ = tx.send(Seen::Closed(i));
+    send(Seen::Closed(i));
+}
+
+/// Reads through the end of a request head; `None` if the peer closes or errors first.
+pub fn read_head(s: &mut impl Read) -> Option<Vec<u8>> {
+    let (mut head, mut buf) = (Vec::new(), [0u8; 1024]);
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => return None,
+            Ok(n) => head.extend_from_slice(&buf[..n]),
+        }
+    }
+    Some(head)
+}
+
+/// A `Connection: close` response with an empty body; `status` may carry extra header lines.
+pub fn reply(status: &str) -> &'static str {
+    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").leak()
+}
+
+pub fn redirect_to(url: &str) -> &'static str {
+    reply(&format!("302 Found\r\nLocation: {url}"))
 }
 
 /// A KTD5 PEM fixture from `tests/fixtures/`.
@@ -213,13 +236,9 @@ pub fn proxy() -> (String, Lines) {
                 return;
             };
             std::thread::spawn(move || {
-                let (mut head, mut buf) = (Vec::new(), [0u8; 1024]);
-                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match client.read(&mut buf) {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => head.extend_from_slice(&buf[..n]),
-                    }
-                }
+                let Some(head) = read_head(&mut client) else {
+                    return;
+                };
                 let text = String::from_utf8_lossy(&head).into_owned();
                 rec.lock().unwrap().push(text.clone());
                 let target = text.split(' ').nth(1).unwrap();
@@ -318,13 +337,12 @@ pub fn socket_server(name: &str, reply: &'static str) -> (String, Lines, impl Dr
     let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
     let heads = Lines::default();
     let rec = Arc::clone(&heads);
-    let (tx, _) = channel();
     std::thread::spawn(move || {
         for (i, s) in listener.incoming().enumerate() {
-            let (Ok(s), tx, rec) = (s, tx.clone(), Arc::clone(&rec)) else {
+            let (Ok(s), rec) = (s, Arc::clone(&rec)) else {
                 return;
             };
-            std::thread::spawn(move || respond(s, i, Some(reply), &tx, &rec));
+            std::thread::spawn(move || respond(s, i, Some(reply), None, &rec));
         }
     });
     (path.clone(), heads, Rm(path))
@@ -396,7 +414,12 @@ pub fn result_line(url: &str, status: u16, text: &str, ok: bool) -> String {
 /// The first verbose error line for `url`, once one is logged.
 pub fn error_line(lines: &Lines, url: &str) -> Option<String> {
     let prefix = format!("  HTTP(S) error for {url} ");
-    text(lines).into_iter().find(|l| l.starts_with(&prefix))
+    lines
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|l| l.starts_with(&prefix))
+        .cloned()
 }
 
 /// Spawns `wait(s)`, runs its first tick and `settle`s until `done`; the caller then
@@ -408,7 +431,7 @@ pub async fn first_check(
     done: impl FnMut() -> bool,
 ) -> tokio::task::JoinHandle<Result<(), String>> {
     let run = tokio::spawn(wait_on_core::waiter::wait(s, sink, NONE));
-    settle(|| text(lines).len() == 1).await;
+    settle(|| lines.lock().unwrap().len() == 1).await;
     tokio::time::advance(MS).await;
     settle(done).await;
     run

@@ -5,20 +5,11 @@ mod common;
 
 use common::*;
 
-fn reply(status: &str) -> &'static str {
-    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").leak()
-}
-
-fn redirect_to(url: &str) -> &'static str {
-    reply(&format!("302 Found\r\nLocation: {url}"))
-}
-
 #[tokio::test(start_paused = true)]
 async fn http_forward_head_ready_on_200() {
     let (url, _seen) = server(Some(OK_CLOSE));
     let r = http_with(&url, |o| o.method = "HEAD".into());
-    let ok = format!("  HTTP(S) result for {url}: {{ status: 200, statusText: 'OK', ok: true }}");
-    ready(r, false, &ok).await;
+    ready(r, false, &result_line(&url, 200, "OK", true)).await;
 }
 
 #[tokio::test(start_paused = true)]

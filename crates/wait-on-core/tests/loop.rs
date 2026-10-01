@@ -8,42 +8,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::*;
 use tokio::time::advance;
-use wait_on_core::http::HttpOptions;
 use wait_on_core::waiter::{Kind, Resource, wait};
-
-fn http(url: &str, method: &str) -> Resource {
-    Resource {
-        name: url.to_string(),
-        kind: Kind::Http(HttpOptions {
-            url: url.to_string(),
-            method: method.into(),
-            follow_redirect: true,
-            ..Default::default()
-        }),
-    }
-}
-
-fn result_line(url: &str, ok: bool) -> String {
-    format!("  HTTP(S) result for {url}: {{ status: 200, statusText: 'OK', ok: {ok} }}")
-}
 
 #[tokio::test(start_paused = true)]
 async fn http_head_and_get_print_result_lines_and_a_refused_url_times_out() {
     let (base, _seen) = server(Some(OK_CLOSE));
     let (head, get) = (format!("{base}/head"), format!("{base}/get"));
-    let refused = format!(
-        "http://127.0.0.1:{}/",
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    );
+    let refused = format!("http://127.0.0.1:{}/", closed_port());
     let (sink, lines) = recorder(true);
     let mut s = spec(vec![
-        http(&head, "HEAD"),
-        http(&get, "GET"),
-        http(&refused, "GET"),
+        http_with(&head, |o| o.method = "HEAD".into()),
+        http_with(&get, |_| {}),
+        http_with(&refused, |_| {}),
     ]);
     s.timeout = Some(300 * MS);
     let run = tokio::spawn(wait(s, sink, NONE));
@@ -74,14 +50,14 @@ async fn http_head_and_get_print_result_lines_and_a_refused_url_times_out() {
         for_url(&head),
         [
             format!("making HTTP(S) HEAD request to  url:{head} ..."),
-            result_line(&head, true),
+            result_line(&head, 200, "OK", true),
         ]
     );
     assert_eq!(
         for_url(&get),
         [
             format!("making HTTP(S) GET request to  url:{get} ..."),
-            result_line(&get, true),
+            result_line(&get, 200, "OK", true),
         ]
     );
 }
@@ -96,23 +72,29 @@ async fn validate_false_keeps_waiting_until_it_answers_true() {
         std::future::ready(Ok::<_, ()>(status == 200 && n > 0))
     });
     let (sink, lines) = recorder(true);
-    let mut s = spec(vec![http(&url, "HEAD")]);
+    let mut s = spec(vec![http_with(&url, |o| o.method = "HEAD".into())]);
     s.interval = 100 * MS;
     let run = tokio::spawn(wait(s, sink, Some(validate)));
     settle(|| text(&lines).len() == 1).await;
     advance(MS).await;
-    settle(|| has(&lines, &result_line(&url, false))).await;
+    settle(|| has(&lines, &result_line(&url, 200, "OK", false))).await;
     assert!(!run.is_finished(), "latched on a false verdict");
     advance(100 * MS).await;
     // settle the second check before awaiting, or auto-advance can start a third
-    settle(|| has(&lines, &result_line(&url, true))).await;
+    settle(|| has(&lines, &result_line(&url, 200, "OK", true))).await;
     assert_eq!(run.await.unwrap(), Ok(()));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     let results: Vec<String> = text(&lines)
         .into_iter()
         .filter(|l| l.starts_with("  HTTP(S) result"))
         .collect();
-    assert_eq!(results, [result_line(&url, false), result_line(&url, true)]);
+    assert_eq!(
+        results,
+        [
+            result_line(&url, 200, "OK", false),
+            result_line(&url, 200, "OK", true)
+        ]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -120,12 +102,12 @@ async fn validate_error_is_not_ready() {
     let (url, _seen) = server(Some(OK_CLOSE));
     let validate = Arc::new(|_: u16| std::future::ready(Err::<bool, _>("boom")));
     let (sink, lines) = recorder(true);
-    let mut s = spec(vec![http(&url, "GET")]);
+    let mut s = spec(vec![http_with(&url, |_| {})]);
     s.timeout = Some(300 * MS);
     let run = tokio::spawn(wait(s, sink, Some(validate)));
     settle(|| text(&lines).len() == 1).await;
     advance(MS).await;
-    settle(|| has(&lines, &result_line(&url, false))).await;
+    settle(|| has(&lines, &result_line(&url, 200, "OK", false))).await;
     advance(300 * MS).await;
     assert_eq!(
         run.await.unwrap(),
@@ -137,7 +119,7 @@ async fn validate_error_is_not_ready() {
 async fn settle_aborts_in_flight_checks_and_stops_ticking() {
     let (url, seen) = server(None);
     let (sink, lines) = recorder(false);
-    let mut s = spec(vec![http(&url, "HEAD")]);
+    let mut s = spec(vec![http_with(&url, |o| o.method = "HEAD".into())]);
     s.interval = 100 * MS;
     s.timeout = Some(150 * MS);
     let run = tokio::spawn(wait(s, sink, NONE));
@@ -219,7 +201,7 @@ async fn mixed_wait_logs_one_waiting_line_per_flip_except_the_last() {
                 port,
             },
         },
-        http(&url, "HEAD"),
+        http_with(&url, |o| o.method = "HEAD".into()),
         Resource {
             name: format!("socket:{sock}"),
             kind: Kind::Socket(sock.clone()),
