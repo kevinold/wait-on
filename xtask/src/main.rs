@@ -3,6 +3,7 @@
 mod bench;
 mod build_napi;
 mod ci;
+mod contract;
 mod hooks;
 mod host;
 mod package;
@@ -15,7 +16,7 @@ type Run = fn(&[String]) -> i32;
 const COMMANDS: &[(&str, &str, Run)] = &[
     (
         "ci",
-        "the full Rust gate: vet, fmt, lint, test, deny, build-napi, mocha (rust-strict), bench-startup",
+        "the full Rust gate: vet, fmt, lint, test, deny, build-napi, mocha (rust-strict), contract, bench-startup",
         ci::run,
     ),
     ("fmt", "cargo fmt --all --check", ci::fmt),
@@ -39,6 +40,11 @@ const COMMANDS: &[(&str, &str, Run)] = &[
         "package",
         "pack and install-test the npm package [--host-only] (run through npm)",
         package::run,
+    ),
+    (
+        "contract",
+        "the consumer contract on the packed package [--tgz P] [--fixture F] [--engine E] (run through npm)",
+        contract::run,
     ),
     (
         "bench-startup",

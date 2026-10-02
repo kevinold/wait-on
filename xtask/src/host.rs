@@ -18,6 +18,14 @@ pub fn node_exe() -> PathBuf {
     std::env::var_os("npm_node_execpath").map_or_else(|| PathBuf::from("node"), PathBuf::from)
 }
 
+/// npm's own entry script (set by `npm run`); `hint` is the command to use instead.
+pub fn npm_execpath(hint: &str) -> Result<String, String> {
+    std::env::var("npm_execpath")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .ok_or(format!("run this through npm: {hint}"))
+}
+
 /// Run a child without a shell and return its exit code (a signal death is 1).
 /// `env`, when given, is the child's whole environment.
 pub fn run(cmd: &Path, args: &[String], cwd: &Path, env: Option<&HashMap<String, String>>) -> i32 {

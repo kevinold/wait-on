@@ -14,10 +14,10 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::build_napi::TARGETS;
-use crate::host;
+use crate::{contract, host};
 
 pub const ADDON: &str = "wait-on.node";
-const NOT_SHIPPED_DIRS: [&str; 8] = [
+const NOT_SHIPPED_DIRS: [&str; 9] = [
     "target/",
     "crates/",
     "scripts/",
@@ -26,6 +26,7 @@ const NOT_SHIPPED_DIRS: [&str; 8] = [
     "benchmarks/",
     "xtask/",
     ".cargo/",
+    "features/",
 ];
 const INSTALL_SCRIPTS: [&str; 4] = ["preinstall", "install", "postinstall", "prepare"];
 
@@ -93,7 +94,9 @@ impl Pack {
 }
 
 fn not_shipped(path: &str) -> bool {
-    path.starts_with("Cargo.") || NOT_SHIPPED_DIRS.iter().any(|d| path.starts_with(d))
+    path.starts_with("Cargo.")
+        || path == "cucumber.js"
+        || NOT_SHIPPED_DIRS.iter().any(|d| path.starts_with(d))
 }
 
 pub fn check_pack(pack: &Pack, dirs: &[String]) -> Vec<String> {
@@ -416,8 +419,26 @@ pub fn probe_verdict(line: &Value, expect_ready: bool, expected_dir: &str) -> Op
     None
 }
 
+/// `npm pack --json` of the working tree, into `dest` when given (else the repo root).
+pub(crate) fn npm_pack(root: &Path, npm: &str, dest: Option<&Path>) -> Result<Pack, String> {
+    let mut cmd = Command::new(host::node_exe());
+    cmd.args([npm, "pack", "--json"]).current_dir(root);
+    if let Some(dest) = dest {
+        cmd.arg("--pack-destination").arg(dest);
+    }
+    let packed = cmd.output().map_err(|e| format!("npm pack failed:\n{e}"))?;
+    if !packed.status.success() {
+        return Err(format!(
+            "npm pack failed:\n{}",
+            String::from_utf8_lossy(&packed.stderr)
+        ));
+    }
+    let pack_json: Value = serde_json::from_slice(&packed.stdout).map_err(|e| e.to_string())?;
+    Pack::from_json(&pack_json[0])
+}
+
 /// A fresh `std::env::temp_dir()/wait-on-<cell>-<pid>-<n>`.
-fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
+pub(crate) fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let n = N.fetch_add(1, Ordering::SeqCst);
@@ -435,10 +456,7 @@ pub fn run(args: &[String]) -> i32 {
 fn package(args: &[String]) -> Result<(), String> {
     let root = host::repo_root();
     let host_only = parse_args(args);
-    let npm = std::env::var("npm_execpath")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .ok_or("run this through npm: npm run ci:rs:package [-- --host-only]")?;
+    let npm = host::npm_execpath("npm run ci:rs:package [-- --host-only]")?;
 
     let dirs = required_dirs(host_only)?;
     let missing = missing_prebuilds(&root.join("prebuilds"), &dirs);
@@ -454,19 +472,7 @@ fn package(args: &[String]) -> Result<(), String> {
         }
     }
     let node = host::node_exe();
-    let packed = Command::new(&node)
-        .args([npm.as_str(), "pack", "--json"])
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("npm pack failed:\n{e}"))?;
-    if !packed.status.success() {
-        return Err(format!(
-            "npm pack failed:\n{}",
-            String::from_utf8_lossy(&packed.stderr)
-        ));
-    }
-    let pack_json: Value = serde_json::from_slice(&packed.stdout).map_err(|e| e.to_string())?;
-    let pack = Pack::from_json(&pack_json[0])?;
+    let pack = npm_pack(&root, &npm, None)?;
     let tgz = root.join(&pack.filename);
 
     let manifest = std::fs::read_to_string(root.join("package.json")).map_err(io)?;
@@ -532,6 +538,9 @@ fn package(args: &[String]) -> Result<(), String> {
         println!("{}: loaded {realpath}", cell.name);
         let _ = std::fs::remove_dir_all(&project);
     }
+
+    // the consumer contract on the tarball just checked (both engines, every fixture)
+    contract::run_with(&tgz, &npm)?;
 
     let ci = std::env::var_os("CI").is_some_and(|v| !v.is_empty());
     let docker_found = Command::new("docker").arg("--version").output().is_ok();
@@ -716,6 +725,20 @@ mod tests {
                 "must not ship: xtask/src/main.rs",
                 "must not ship: .cargo/config.toml",
                 "must not ship: Cargo.lock"
+            ]
+        );
+    }
+
+    #[test]
+    fn check_pack_never_ships_the_consumer_contract() {
+        let mut paths = prebuild_paths(&PO4);
+        paths.extend(["features/support/world.js", "cucumber.js"].map(String::from));
+        let problems = check_pack(&pack_of(&paths), &po4());
+        assert_eq!(
+            problems,
+            [
+                "must not ship: features/support/world.js",
+                "must not ship: cucumber.js"
             ]
         );
     }

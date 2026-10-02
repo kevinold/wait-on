@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::{bench, build_napi, host};
+use crate::{bench, build_napi, contract, host};
 
 /// One step of `cargo xtask ci`.
 #[derive(Debug, PartialEq)]
@@ -11,6 +11,7 @@ pub enum Step {
     Cargo(Vec<String>),
     BuildNapi,
     Mocha,
+    Contract,
     BenchStartup,
 }
 
@@ -44,7 +45,8 @@ pub fn cov_args(extra: &[String]) -> Vec<String> {
 }
 
 /// The `ci` gate, in order; the driver stops at the first failure.
-/// Vet first (an unvetted crate fails before any build), bench last (never masks a test failure).
+/// Vet first (an unvetted crate fails before any build), the consumer contract after mocha
+/// (on a pack of the working tree), bench last (never masks a test failure).
 pub fn steps() -> Vec<Step> {
     vec![
         Step::Cargo(strings(&["vet", "--locked"])),
@@ -54,6 +56,7 @@ pub fn steps() -> Vec<Step> {
         Step::Cargo(strings(&["deny", "check"])),
         Step::BuildNapi,
         Step::Mocha,
+        Step::Contract,
         Step::BenchStartup,
     ]
 }
@@ -81,6 +84,7 @@ pub fn echo(step: &Step, root: &Path) -> String {
         Step::Cargo(args) => format!("cargo {}", args.join(" ")),
         Step::BuildNapi => "xtask build-napi".to_string(),
         Step::BenchStartup => "xtask bench-startup".to_string(),
+        Step::Contract => "xtask contract".to_string(),
         Step::Mocha => {
             let (node, args, _) = mocha_command(root);
             let node = node.file_name().unwrap_or_default().to_string_lossy();
@@ -142,6 +146,7 @@ pub fn run(_: &[String]) -> i32 {
             Step::Cargo(args) => cargo(args),
             Step::BuildNapi => build_napi::run(&[]),
             Step::BenchStartup => bench::run(&[]),
+            Step::Contract => contract::run(&[]),
             Step::Mocha => {
                 let (node, args, env) = mocha_command(&root);
                 host::run(&node, &args, &root, Some(&env))
@@ -245,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn ci_runs_vet_fmt_lint_test_deny_build_mocha_then_bench() {
+    fn ci_runs_vet_fmt_lint_test_deny_build_mocha_contract_then_bench() {
         assert_eq!(
             steps(),
             vec![
@@ -263,6 +268,7 @@ mod tests {
                 Step::Cargo(strings(&["deny", "check"])),
                 Step::BuildNapi,
                 Step::Mocha,
+                Step::Contract,
                 Step::BenchStartup,
             ]
         );
@@ -317,6 +323,7 @@ mod tests {
                 "> cargo deny check".to_string(),
                 "> xtask build-napi".to_string(),
                 format!("> {node} {} --exit test/**/*.mocha.js", mocha.display()),
+                "> xtask contract".to_string(),
                 "> xtask bench-startup".to_string(),
             ]
         );

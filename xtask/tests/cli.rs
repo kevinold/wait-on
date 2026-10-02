@@ -7,7 +7,7 @@ fn xtask(args: &[&str]) -> Output {
         .expect("spawn xtask")
 }
 
-const SUBCOMMANDS: [&str; 9] = [
+const SUBCOMMANDS: [&str; 10] = [
     "ci",
     "fmt",
     "lint",
@@ -15,6 +15,7 @@ const SUBCOMMANDS: [&str; 9] = [
     "cov",
     "build-napi",
     "package",
+    "contract",
     "bench-startup",
     "hooks",
 ];
@@ -75,6 +76,18 @@ fn unknown_subcommand_is_named_and_exits_2() {
 fn package_refuses_to_run_outside_npm() {
     let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["package", "--host-only"])
+        .env_remove("npm_execpath")
+        .output()
+        .expect("spawn xtask");
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run this through npm"), "{stderr}");
+}
+
+#[test]
+fn contract_refuses_to_run_outside_npm() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["contract", "--engine", "js"])
         .env_remove("npm_execpath")
         .output()
         .expect("spawn xtask");
