@@ -122,12 +122,14 @@ pub fn cell_env(
 ) -> HashMap<String, String> {
     let mut env = scrubbed(parent);
     host::env_set(&mut env, "WAIT_ON_ENGINE", engine);
-    // quoted so a temp path with spaces survives Node's NODE_OPTIONS parsing
-    host::env_set(
-        &mut env,
-        "NODE_OPTIONS",
-        &format!("--require \"{}\"", preload.display()),
-    );
+    // quoted so a path with spaces survives Node's NODE_OPTIONS parsing, which also reads
+    // `\` and `"` inside quotes as escapes (Windows paths are full of backslashes)
+    let quoted = preload
+        .display()
+        .to_string()
+        .replace('\\', r"\\")
+        .replace('"', r#"\""#);
+    host::env_set(&mut env, "NODE_OPTIONS", &format!("--require \"{quoted}\""));
     env
 }
 
@@ -310,6 +312,16 @@ mod tests {
                 assert!(!cell.env.contains_key(key), "{key} scrubbed");
             }
         }
+    }
+
+    #[test]
+    fn node_options_escapes_backslashes_in_a_windows_preload_path() {
+        // Node's NODE_OPTIONS parser treats `\` inside a quoted value as an escape
+        let env = cell_env("js", Path::new(r"C:\r\p.js"), &HashMap::new());
+        assert_eq!(
+            env.get("NODE_OPTIONS").map(String::as_str),
+            Some(r#"--require "C:\\r\\p.js""#)
+        );
     }
 
     #[test]
