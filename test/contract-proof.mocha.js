@@ -34,6 +34,13 @@ describe('contract route verdict', function () {
     expect(routeVerdict([rec([], true), rec([], false)], { engine: 'js', route: 'engine', addonDir })).to.equal(null);
   });
 
+  // Windows: Node dlopens addons through path.toNamespacedPath, so the recorded realpath
+  // carries the \\?\ prefix while the prebuilds dir does not
+  it('should accept the installed addon recorded with a Windows verbatim \\\\?\\ prefix', function () {
+    const verbatim = `\\\\?\\${addon}`;
+    expect(routeVerdict([rec([verbatim], false)], { engine: 'rust-strict', route: 'engine', addonDir })).to.equal(null);
+  });
+
   it('should fail an addon realpath outside the installed prebuilds dir, naming both paths', function () {
     const stray = path.join(path.sep, 'repo', 'prebuilds', 'darwin-arm64', 'wait-on.node');
     const verdict = routeVerdict([rec([stray], false)], { engine: 'rust-strict', route: 'engine', addonDir });

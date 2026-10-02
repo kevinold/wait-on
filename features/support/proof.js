@@ -8,8 +8,12 @@
 
 const path = require('path');
 
+// Windows dlopens addons through path.toNamespacedPath (`\\?\C:\...`); the dir has no prefix.
+// ponytail: drive paths only, like xtask's strip_verbatim; `\\?\UNC\` never hosts a temp project
+const stripVerbatim = (p) => (p.startsWith('\\\\?\\') ? p.slice(4) : p);
+
 const inside = (dir, file) => {
-  const rel = path.relative(dir, file);
+  const rel = path.relative(dir, stripVerbatim(file));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
