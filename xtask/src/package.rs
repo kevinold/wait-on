@@ -147,6 +147,29 @@ pub fn size_report(pack: &Pack) -> Sizes {
     }
 }
 
+/// Per-addon unpacked ceiling and full-tarball packed ceiling (R24).
+pub const ADDON_BUDGET: u64 = 3_145_728;
+pub const PACKED_BUDGET: u64 = 10_485_760;
+
+/// Budget problems, one per offending target; the packed total only counts on full packs.
+pub fn check_budget(sizes: &Sizes, host_only: bool) -> Vec<String> {
+    let mut problems: Vec<String> = sizes
+        .targets
+        .iter()
+        .filter(|(_, size)| *size > ADDON_BUDGET)
+        .map(|(dir, size)| {
+            format!("{dir} addon is {size} bytes unpacked, over the {ADDON_BUDGET} budget")
+        })
+        .collect();
+    if !host_only && sizes.packed > PACKED_BUDGET {
+        problems.push(format!(
+            "tarball is {} bytes packed, over the {PACKED_BUDGET} budget",
+            sizes.packed
+        ));
+    }
+    problems
+}
+
 pub fn sha256sums_line(file: &Path) -> Result<String, String> {
     let bytes = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
@@ -463,6 +486,10 @@ fn package(args: &[String]) -> Result<(), String> {
     println!("  js-only unpacked {}", sizes.js_only_unpacked);
     for (dir, size) in &sizes.targets {
         println!("  {dir:<16} {size}");
+    }
+    let over = check_budget(&sizes, host_only);
+    if !over.is_empty() {
+        return Err(format!("size budget exceeded:\n  {}", over.join("\n  ")));
     }
 
     std::fs::write(root.join("SHA256SUMS"), sha256sums_line(&tgz)?).map_err(io)?;
@@ -793,6 +820,40 @@ mod tests {
                 targets: po4().into_iter().map(|d| (d, 600_000)).collect(),
             }
         );
+    }
+
+    fn sizes(packed: u64, linux_x64: u64) -> Sizes {
+        Sizes {
+            packed,
+            unpacked: 0,
+            js_only_unpacked: 0,
+            targets: vec![
+                ("darwin-arm64".into(), 1_924_752),
+                ("linux-x64".into(), linux_x64),
+            ],
+        }
+    }
+
+    #[test]
+    fn check_budget_passes_targets_and_tarball_at_the_ceilings() {
+        assert!(check_budget(&sizes(10_485_760, 3_145_728), false).is_empty());
+    }
+
+    #[test]
+    fn check_budget_names_the_one_target_over_the_addon_ceiling() {
+        assert_eq!(
+            check_budget(&sizes(1, 3_145_729), true),
+            ["linux-x64 addon is 3145729 bytes unpacked, over the 3145728 budget"]
+        );
+    }
+
+    #[test]
+    fn check_budget_checks_the_packed_total_only_on_full_packs() {
+        assert_eq!(
+            check_budget(&sizes(10_485_761, 1), false),
+            ["tarball is 10485761 bytes packed, over the 10485760 budget"]
+        );
+        assert!(check_budget(&sizes(10_485_761, 1), true).is_empty());
     }
 
     #[test]
