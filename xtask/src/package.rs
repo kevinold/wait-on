@@ -14,10 +14,10 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::build_napi::TARGETS;
-use crate::host;
+use crate::{contract, host};
 
 pub const ADDON: &str = "wait-on.node";
-const NOT_SHIPPED_DIRS: [&str; 8] = [
+const NOT_SHIPPED_DIRS: [&str; 9] = [
     "target/",
     "crates/",
     "scripts/",
@@ -26,6 +26,7 @@ const NOT_SHIPPED_DIRS: [&str; 8] = [
     "benchmarks/",
     "xtask/",
     ".cargo/",
+    "features/",
 ];
 const INSTALL_SCRIPTS: [&str; 4] = ["preinstall", "install", "postinstall", "prepare"];
 
@@ -93,7 +94,9 @@ impl Pack {
 }
 
 fn not_shipped(path: &str) -> bool {
-    path.starts_with("Cargo.") || NOT_SHIPPED_DIRS.iter().any(|d| path.starts_with(d))
+    path.starts_with("Cargo.")
+        || path == "cucumber.js"
+        || NOT_SHIPPED_DIRS.iter().any(|d| path.starts_with(d))
 }
 
 pub fn check_pack(pack: &Pack, dirs: &[String]) -> Vec<String> {
@@ -417,7 +420,7 @@ pub fn probe_verdict(line: &Value, expect_ready: bool, expected_dir: &str) -> Op
 }
 
 /// A fresh `std::env::temp_dir()/wait-on-<cell>-<pid>-<n>`.
-fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
+pub(crate) fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let n = N.fetch_add(1, Ordering::SeqCst);
@@ -532,6 +535,9 @@ fn package(args: &[String]) -> Result<(), String> {
         println!("{}: loaded {realpath}", cell.name);
         let _ = std::fs::remove_dir_all(&project);
     }
+
+    // the consumer contract on the tarball just checked (both engines, every fixture)
+    contract::run_with(&tgz, &npm)?;
 
     let ci = std::env::var_os("CI").is_some_and(|v| !v.is_empty());
     let docker_found = Command::new("docker").arg("--version").output().is_ok();
@@ -716,6 +722,20 @@ mod tests {
                 "must not ship: xtask/src/main.rs",
                 "must not ship: .cargo/config.toml",
                 "must not ship: Cargo.lock"
+            ]
+        );
+    }
+
+    #[test]
+    fn check_pack_never_ships_the_consumer_contract() {
+        let mut paths = prebuild_paths(&PO4);
+        paths.extend(["features/support/world.js", "cucumber.js"].map(String::from));
+        let problems = check_pack(&pack_of(&paths), &po4());
+        assert_eq!(
+            problems,
+            [
+                "must not ship: features/support/world.js",
+                "must not ship: cucumber.js"
             ]
         );
     }
