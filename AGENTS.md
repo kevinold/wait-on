@@ -80,11 +80,15 @@ has syntax worth failing fast on.
 
 - `npm test` — the full check: `npm run lint && npm run test:types && npm run test:mocha`.
 - `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `benchmarks/**/*.js`,
-  `xtask/**/*.js`, `bin/wait-on`
+  `xtask/**/*.js`, `features/**/*.js`, `cucumber.js`, `bin/wait-on`
   (flat config `eslint.config.mjs`).
 - `npm run test:mocha` — `mocha --exit "test/**/*.mocha.js"` (`--exit` is required: spun-up
   test servers leave open handles).
 - `npm run test:coverage` — nyc + mocha.
+- `npm run contract` — the library-consumer contract: `features/*.feature` run by cucumber-js
+  against the packed, installed package in CJS, ESM and TypeScript fixture projects under
+  `js` and `rust-strict` (`cargo xtask contract`; `ci:rs` runs it). See
+  [`docs/guides/testing.md`](docs/guides/testing.md#consumer-contract).
 - Node engines floor is `>=22.19.0`.
 
 ## Conventions
@@ -95,7 +99,9 @@ has syntax worth failing fast on.
   `test/config-headers.js`. How to write them: see
   [Test-Driven Development](#test-driven-development-mandatory). Engine behaviour gets a Rust
   test first (`crates/wait-on-core`); JS tests only at the API/CLI front doors (inventory:
-  [`docs/guides/testing.md`](docs/guides/testing.md#js-vs-rust-inventory)).
+  [`docs/guides/testing.md`](docs/guides/testing.md#js-vs-rust-inventory)). A change to what
+  library or CLI consumers see also adds or updates a scenario in `features/*.feature`, the
+  consumer contract.
 - CI runs on **ubuntu + windows** (matrix node 22/24/26, `npm ci --engine-strict`). No
   POSIX-only assumptions: mind Windows named pipes and path separators, and don't rely on
   unix-only tooling (e.g. `openssl speed`) or shell.
