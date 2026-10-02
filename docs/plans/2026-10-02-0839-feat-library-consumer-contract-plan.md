@@ -414,3 +414,9 @@ Quality gates unchanged: Conventional Commits via `.githooks/commit-msg`, no `.o
 ### Measured sizes (darwin-arm64, rustc 1.98.1, gzip -9)
 
 Baseline 4,744,896 raw / 1,804,843 gzip; `strip+lto+cgu1+z` with unwinding 1,924,752 raw / 1,097,724 gzip; the same with `panic=abort` 1,609,584 / 948,905. Projected eight-target packed total with unwinding ≈ 9.2 MB (from 15.0 MB). Linux, Windows and musl were not measured; Windows MSVC gains less from `strip` (symbols already in the PDB).
+
+---
+
+## Resume notes
+
+- **L15 / U1 (#96), 2026-10-02.** `[profile.release]` in the root `Cargo.toml`; `ADDON_BUDGET`/`PACKED_BUDGET` and `check_budget` in `xtask/src/package.rs` (one `Sizes` per call, no `Budget` struct: the tests use the real ceilings); `xtask/tests/release_profile.rs` pins `opt-level = "z"` and unwind. Host measurement (darwin-arm64): addon 1,924,752 bytes, host-only tarball 1,158,790 packed; `npm run ci:rs` green (492 mocha under rust-strict, bench-startup ok, cov 100%). A fresh worktree needs `npm ci` before `ci:rs` (`build-napi` needs `@napi-rs/cli`). Open: the first full `package` run after merge refreshes the eight-target table in `docs/guides/ci.md`.

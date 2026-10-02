@@ -34,11 +34,11 @@ If a lane needs a different `build:napi` argument shape, the `extra-args` matrix
 
 1. Guard: every target dir from `build_napi.rs` `TARGETS` must hold `prebuilds/<dir>/wait-on.node`, else it exits 1 listing the missing ones. `--host-only` (developer runs, never CI) requires only the host dir.
 2. `npm pack --json` (stale `wait-on-*.tgz` removed first); the file list must hold every required addon and nothing from `target/`, `crates/`, `scripts/`, `docs/`, `test/`, `benchmarks/`, `xtask/`, `.cargo/`, `Cargo.*`; `package.json` must declare no `preinstall`/`install`/`postinstall`/`prepare` script and no `optionalDependencies`.
-3. Size report (packed, unpacked, JS-only unpacked, per-target bytes) and `SHA256SUMS` (`sha256sum -c` format).
+3. Size report (packed, unpacked, JS-only unpacked, per-target bytes), then the size budget: it exits 1 naming each target whose `wait-on.node` exceeds 3,145,728 bytes unpacked and, on full packs only (not `--host-only`), a tarball over 10,485,760 bytes packed. The two numbers are `ADDON_BUDGET` and `PACKED_BUDGET` in `xtask/src/package.rs`. Then `SHA256SUMS` (`sha256sum -c` format).
 4. Install cells, each in a fresh temp project with `WAIT_ON_NATIVE_LIBRARY_PATH` removed: `npm install --ignore-scripts`, the same with `--omit=optional`, and `pnpm add --ignore-scripts` (pnpm pinned in `xtask/src/package.rs`, fetched with `npm exec`). `xtask/assets/prebuild-probe.js` then runs under `WAIT_ON_ENGINE=rust-strict`: it loads the installed engine, waits on a local tcp port through the API and the CLI, and prints the addon path, which must be the host dir inside the installed package.
 5. AE1 container cells: `node:24-trixie-slim` (glibc) and `node:24-alpine` (musl) images install the tarball at build time with `ignore-scripts=true`, then run with `--read-only --network none -e WAIT_ON_ENGINE=rust-strict`. A ready cell must exit 0 with the addon from `linux-<arch>[-musl]`; a timeout cell (`--no-listener`) must exit non-zero with `Timed out waiting for`. Without docker, or without the linux prebuilds for the runner arch, the cells skip with one line locally and fail under `CI`.
 
-Sizes with all eight prebuilds, from the prerelease `rs-10.0.0-rc.1-832c588` (2026-10-01). The prebuilds roughly quadrupled since the first measurement (L9, run 36773818018, 2026-09-30: 3,359,787 bytes packed), because the HTTP, TLS and proxy checks (reqwest, rustls, ring) moved into the addon after it:
+Sizes with all eight prebuilds before the size-tuned `[profile.release]` (L15), from the prerelease `rs-10.0.0-rc.1-832c588` (2026-10-01). The prebuilds roughly quadrupled since the first measurement (L9, run 36773818018, 2026-09-30: 3,359,787 bytes packed), because the HTTP, TLS and proxy checks (reqwest, rustls, ring) moved into the addon after it:
 
 | | bytes |
 |---|---|
@@ -54,7 +54,7 @@ Sizes with all eight prebuilds, from the prerelease `rs-10.0.0-rc.1-832c588` (20
 | `win32-x64` | 4,086,784 |
 | `win32-arm64` | 3,535,360 |
 
-No size threshold is enforced; the numbers are PO5's decision input. The size report `ci:rs:package` prints in each `package` job has the current numbers.
+The root `Cargo.toml` `[profile.release]` (`lto = "fat"`, `codegen-units = 1`, `strip = "symbols"`, `opt-level = "z"`) shrinks each addon; `panic` stays at unwind so a Rust panic rejects the promise instead of aborting the consumer's process, and `xtask/tests/release_profile.rs` pins that. Measured on darwin-arm64: `wait-on.node` 4,744,944 → 1,924,752 bytes; host-only tarball 1,158,790 bytes packed (2026-10-02, rustc 1.98.1). The first full `package` run after L15 merges replaces the table above with tuned numbers for all eight targets; a target over budget there is fixed forward (the plan's fallbacks: `lto = "thin"` if a `napi` row exceeds 30 minutes, or dropping a low-traffic target). The size report `ci:rs:package` prints in each `package` job has the current numbers.
 
 ## napi target matrix
 
