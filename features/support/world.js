@@ -25,24 +25,32 @@ class ContractWorld extends World {
     this.vars = {}; // placeholder -> actual value, e.g. tmp -> /tmp/.../file
     this.resources = []; // resource strings in declaration order (KTD5 <resource N>)
     this.cleanups = [];
+    this.env = {}; // extra env for every child this scenario spawns
   }
 
-  // `<name>` placeholders in scenario text -> actual values
-  fill(text) {
-    return text.replace(/<(\w+)>/g, (m, name) => (name in this.vars ? this.vars[name] : m));
+  // `<name>` and `<resource N>` placeholders in scenario text -> actual values;
+  // `json` escapes them for a JSON string (Windows paths carry backslashes)
+  fill(text, { json = false } = {}) {
+    const value = (v) => (json ? JSON.stringify(String(v)).slice(1, -1) : v);
+    return text
+      .replace(/<resource (\d+)>/g, (m, n) => (this.resources[n - 1] === undefined ? m : value(this.resources[n - 1])))
+      .replace(/<(\w+)>/g, (m, name) => (name in this.vars ? value(this.vars[name]) : m));
   }
 
-  // actual values in output -> placeholders (KTD5); resources first, they contain the vars
-  normalize(text) {
+  // actual values in output -> placeholders (KTD5); resources first, they contain the vars.
+  // CLI output keeps resource strings (they are what a user typed), so it maps vars only.
+  normalize(text, { resources = true } = {}) {
     let out = text;
-    this.resources.forEach((r, i) => {
-      out = out.split(r).join(`<resource ${i + 1}>`);
-    });
+    if (resources) {
+      this.resources.forEach((r, i) => {
+        out = out.split(r).join(`<resource ${i + 1}>`);
+      });
+    }
     for (const [name, value] of Object.entries(this.vars)) out = out.split(String(value)).join(`<${name}>`);
     return out;
   }
 
-  spawn(args, { env = {} } = {}) {
+  spawn(args, { env = this.env } = {}) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       const child = childProcess.spawn(process.execPath, args, {

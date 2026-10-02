@@ -22,11 +22,11 @@ Given('a missing file', function () {
 });
 
 When('the consumer calls waitOn with:', async function (opts) {
-  await this.callWaitOn(JSON.parse(this.fill(opts)));
+  await this.callWaitOn(JSON.parse(this.fill(opts, { json: true })));
 });
 
 When('the consumer calls waitOn with a callback and:', async function (opts) {
-  await this.callWaitOn(JSON.parse(this.fill(opts)), { callback: true });
+  await this.callWaitOn(JSON.parse(this.fill(opts, { json: true })), { callback: true });
 });
 
 Then('the wait resolves', function () {
