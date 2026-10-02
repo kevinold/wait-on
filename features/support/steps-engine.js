@@ -55,15 +55,11 @@ Given('an HTTP server answering {int} to GET', async function (status) {
   addResource(this, `http-get://127.0.0.1:${port}/`, { port });
 });
 
-Given('an HTTPS server answering {int}, trusted through its CA', async function (status) {
-  const server = await serve(this, () => servers.httpsServer(status));
-  this.extraOpts = { ...this.extraOpts, ca: server.ca, strictSSL: true };
-  addResource(this, `https://127.0.0.1:${server.port}/`, { port: server.port });
-});
-
-Given('an HTTPS server answering {int}, not trusted', async function (status) {
-  const server = await serve(this, () => servers.httpsServer(status));
-  this.extraOpts = { ...this.extraOpts, strictSSL: true };
+// strictSSL either way; only a trusted server's certificate is passed as `ca`
+Given(/^an HTTPS server answering (\d+), (trusted through its CA|not trusted)$/, async function (status, trust) {
+  const server = await serve(this, () => servers.httpsServer(Number(status)));
+  const ca = trust === 'not trusted' ? {} : { ca: server.ca };
+  this.extraOpts = { ...this.extraOpts, ...ca, strictSSL: true };
   addResource(this, `https://127.0.0.1:${server.port}/`, { port: server.port });
 });
 

@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -106,17 +105,22 @@ pub fn tags(fixture: &str) -> String {
     }
 }
 
+/// `parent` without `SCRUBBED`.
+fn scrubbed(parent: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut env = parent.clone();
+    for key in SCRUBBED {
+        host::env_remove(&mut env, key);
+    }
+    env
+}
+
 /// The parent env, scrubbed, with the engine and the proof preload set.
 pub fn cell_env(
     engine: &str,
     preload: &Path,
     parent: &HashMap<String, String>,
 ) -> HashMap<String, String> {
-    let mut env = parent.clone();
-    for key in SCRUBBED {
-        env.remove(key);
-        host::env_remove(&mut env, key);
-    }
+    let mut env = scrubbed(parent);
     host::env_set(&mut env, "WAIT_ON_ENGINE", engine);
     // quoted so a temp path with spaces survives Node's NODE_OPTIONS parsing
     host::env_set(
@@ -132,13 +136,6 @@ pub fn run(args: &[String]) -> i32 {
     host::exit_code(contract(args).map(|()| 0))
 }
 
-fn npm_execpath() -> Result<String, String> {
-    std::env::var("npm_execpath")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .ok_or("run this through npm: npm run contract [-- --engine js]".to_string())
-}
-
 fn preload_path(root: &Path) -> PathBuf {
     root.join("features")
         .join("support")
@@ -147,7 +144,7 @@ fn preload_path(root: &Path) -> PathBuf {
 
 fn contract(args: &[String]) -> Result<(), String> {
     let root = host::repo_root();
-    let npm = npm_execpath()?;
+    let npm = host::npm_execpath("npm run contract [-- --engine js]")?;
     let plan = plan(args, &host::env_map(), &preload_path(&root))?;
     let tgz = match plan.tgz {
         Some(t) => std::path::absolute(&t).map_err(|e| format!("{t}: {e}"))?,
@@ -166,23 +163,8 @@ pub fn run_with(tgz: &Path, npm: &str) -> Result<(), String> {
 
 fn pack(root: &Path, npm: &str) -> Result<PathBuf, String> {
     let dest = package::fresh_temp_dir("contract-pack")?;
-    let out = Command::new(host::node_exe())
-        .args([npm, "pack", "--json", "--pack-destination"])
-        .arg(&dest)
-        .current_dir(root)
-        .output()
-        .map_err(|e| format!("npm pack failed:\n{e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "npm pack failed:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    let json: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
-    let name = json[0]["filename"]
-        .as_str()
-        .ok_or("npm pack printed no filename")?;
-    Ok(dest.join(name))
+    let pack = package::npm_pack(root, npm, Some(&dest))?;
+    Ok(dest.join(pack.filename))
 }
 
 /// The `@types/node` version the repo locks; the ts fixture installs it because
@@ -218,11 +200,7 @@ fn install(root: &Path, npm: &str, tgz: &Path, fixture: &str) -> Result<PathBuf,
     if fixture == "ts" {
         args.push(format!("@types/node@{}", locked_types_node(root)?));
     }
-    let mut env = host::env_map();
-    for key in SCRUBBED {
-        env.remove(key);
-        host::env_remove(&mut env, key);
-    }
+    let env = scrubbed(&host::env_map());
     if host::run(&host::node_exe(), &args, &project, Some(&env)) != 0 {
         return Err(format!("contract {fixture}: npm install failed"));
     }

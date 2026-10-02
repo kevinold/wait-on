@@ -98,7 +98,11 @@ class ContractWorld extends World {
 
   addonDir() {
     const dir = path.join(this.project, 'node_modules', 'wait-on', 'prebuilds', this.hostDir);
-    return fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
+    try {
+      return fs.realpathSync(dir);
+    } catch {
+      return dir;
+    }
   }
 }
 

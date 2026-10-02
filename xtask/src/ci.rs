@@ -45,8 +45,8 @@ pub fn cov_args(extra: &[String]) -> Vec<String> {
 }
 
 /// The `ci` gate, in order; the driver stops at the first failure.
-/// The consumer contract runs after mocha, on a host-only pack of the working tree.
-/// Vet first (an unvetted crate fails before any build), bench last (never masks a test failure).
+/// Vet first (an unvetted crate fails before any build), the consumer contract after mocha
+/// (on a pack of the working tree), bench last (never masks a test failure).
 pub fn steps() -> Vec<Step> {
     vec![
         Step::Cargo(strings(&["vet", "--locked"])),

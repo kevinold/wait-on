@@ -8,24 +8,22 @@ const https = require('https');
 const net = require('net');
 const path = require('path');
 const tlsFixture = require('../../test/helpers/tls-fixture');
+const { getFreePort, listening } = require('../../test/helpers/cli-conformance');
 
 let pipes = 0;
 // Windows has no unix domain sockets; Node listens on a named pipe there instead
-// (the \\?\pipe\<dir> form test/helpers/tls-fixture.js uses)
+// (the \\?\pipe\<dir> form test/helpers/tls-fixture.js uses); a counter keeps names unique
 function socketPath(dir) {
   pipes += 1;
   const name = `sock-${pipes}`;
   return process.platform === 'win32' ? path.join('\\\\?\\pipe', dir, name) : path.join(dir, name);
 }
 
-const closer = (server) => () => new Promise((resolve) => server.close(() => resolve()));
-
-function listen(server, ...args) {
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(...args, () => resolve(server));
-  });
-}
+// close, dropping kept-alive http connections first so close() does not wait on them
+const closer = (server) => () => {
+  if (server.closeAllConnections) server.closeAllConnections();
+  return new Promise((resolve) => server.close(() => resolve()));
+};
 
 async function tcpServer(host) {
   const sockets = new Set();
@@ -33,22 +31,15 @@ async function tcpServer(host) {
     sockets.add(s);
     s.on('close', () => sockets.delete(s));
   });
-  await listen(server, 0, host);
+  await listening(server, 0, host);
+  const close = closer(server);
   return {
     port: server.address().port,
     close: () => {
       for (const s of sockets) s.destroy();
-      return closer(server)();
+      return close();
     }
   };
-}
-
-// a port nothing listens on: bind, read the port, close
-async function freePort() {
-  const server = await listen(net.createServer(), 0, '127.0.0.1');
-  const { port } = server.address();
-  await closer(server)();
-  return port;
 }
 
 const answering = (status) => (req, res) => {
@@ -59,8 +50,8 @@ const answering = (status) => (req, res) => {
 async function httpServer(status) {
   const server = http.createServer(answering(status));
   server.keepAliveTimeout = 1;
-  await listen(server, 0, '127.0.0.1');
-  return { port: server.address().port, close: () => (server.closeAllConnections(), closer(server)()) };
+  await listening(server, 0, '127.0.0.1');
+  return { port: server.address().port, close: closer(server) };
 }
 
 // openssl is required: the contract allows no skipped scenarios (R2), so a missing tool fails
@@ -68,35 +59,28 @@ async function httpsServer(status) {
   const tls = tlsFixture();
   if (!tls) throw new Error('openssl required for the https scenarios (not found on PATH)');
   const server = https.createServer({ key: tls.key, cert: tls.cert }, answering(status));
-  await listen(server, 0, '127.0.0.1');
+  await listening(server, 0, '127.0.0.1');
+  const close = closer(server);
   return {
     port: server.address().port,
     ca: tls.cert.toString(),
-    close: () => {
-      server.closeAllConnections();
-      tls.cleanup();
-      return closer(server)();
-    }
+    close: () => close().then(tls.cleanup)
   };
 }
 
 async function unixServer(dir) {
   const file = socketPath(dir);
-  const server = await listen(net.createServer((s) => s.end()), file);
+  const server = await listening(
+    net.createServer((s) => s.end()),
+    file
+  );
   return { path: file, close: closer(server) };
 }
 
 async function httpUnixServer(dir, status) {
   const file = socketPath(dir);
-  const server = http.createServer(answering(status));
-  await listen(server, file);
-  return {
-    path: file,
-    close: () => {
-      server.closeAllConnections();
-      return closer(server)();
-    }
-  };
+  const server = await listening(http.createServer(answering(status)), file);
+  return { path: file, close: closer(server) };
 }
 
-module.exports = { socketPath, tcpServer, freePort, httpServer, httpsServer, unixServer, httpUnixServer };
+module.exports = { socketPath, tcpServer, freePort: getFreePort, httpServer, httpsServer, unixServer, httpUnixServer };

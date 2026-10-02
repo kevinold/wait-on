@@ -419,6 +419,24 @@ pub fn probe_verdict(line: &Value, expect_ready: bool, expected_dir: &str) -> Op
     None
 }
 
+/// `npm pack --json` of the working tree, into `dest` when given (else the repo root).
+pub(crate) fn npm_pack(root: &Path, npm: &str, dest: Option<&Path>) -> Result<Pack, String> {
+    let mut cmd = Command::new(host::node_exe());
+    cmd.args([npm, "pack", "--json"]).current_dir(root);
+    if let Some(dest) = dest {
+        cmd.arg("--pack-destination").arg(dest);
+    }
+    let packed = cmd.output().map_err(|e| format!("npm pack failed:\n{e}"))?;
+    if !packed.status.success() {
+        return Err(format!(
+            "npm pack failed:\n{}",
+            String::from_utf8_lossy(&packed.stderr)
+        ));
+    }
+    let pack_json: Value = serde_json::from_slice(&packed.stdout).map_err(|e| e.to_string())?;
+    Pack::from_json(&pack_json[0])
+}
+
 /// A fresh `std::env::temp_dir()/wait-on-<cell>-<pid>-<n>`.
 pub(crate) fn fresh_temp_dir(cell: &str) -> Result<PathBuf, String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -438,10 +456,7 @@ pub fn run(args: &[String]) -> i32 {
 fn package(args: &[String]) -> Result<(), String> {
     let root = host::repo_root();
     let host_only = parse_args(args);
-    let npm = std::env::var("npm_execpath")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .ok_or("run this through npm: npm run ci:rs:package [-- --host-only]")?;
+    let npm = host::npm_execpath("npm run ci:rs:package [-- --host-only]")?;
 
     let dirs = required_dirs(host_only)?;
     let missing = missing_prebuilds(&root.join("prebuilds"), &dirs);
@@ -457,19 +472,7 @@ fn package(args: &[String]) -> Result<(), String> {
         }
     }
     let node = host::node_exe();
-    let packed = Command::new(&node)
-        .args([npm.as_str(), "pack", "--json"])
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("npm pack failed:\n{e}"))?;
-    if !packed.status.success() {
-        return Err(format!(
-            "npm pack failed:\n{}",
-            String::from_utf8_lossy(&packed.stderr)
-        ));
-    }
-    let pack_json: Value = serde_json::from_slice(&packed.stdout).map_err(|e| e.to_string())?;
-    let pack = Pack::from_json(&pack_json[0])?;
+    let pack = npm_pack(&root, &npm, None)?;
     let tgz = root.join(&pack.filename);
 
     let manifest = std::fs::read_to_string(root.join("package.json")).map_err(io)?;

@@ -17,16 +17,10 @@ Given('the environment variable {word} is {string}', function (name, value) {
   this.env[name] = value;
 });
 
-Then('the callback was called once, {word}, with {word}', function (timing, arg) {
+Then(/^the callback was called once, (later|synchronously), with (undefined|an Error)$/, function (timing, arg) {
   assert.strictEqual(this.result.cbCalls, 1, JSON.stringify(this.result));
   assert.strictEqual(this.result.cbSync, timing === 'synchronously', `callback timing ${timing}`);
-  assert.strictEqual(this.result.cbArg, arg);
-});
-
-Then('the callback was called once, {word}, with an Error', function (timing) {
-  assert.strictEqual(this.result.cbCalls, 1, JSON.stringify(this.result));
-  assert.strictEqual(this.result.cbSync, timing === 'synchronously', `callback timing ${timing}`);
-  assert.strictEqual(this.result.cbArg, 'Error');
+  assert.strictEqual(this.result.cbArg, arg === 'an Error' ? 'Error' : arg);
 });
 
 Then('waitOn returned a Promise', function () {

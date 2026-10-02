@@ -4,9 +4,10 @@
 // through the fixture runner, and the outcomes (KTD4, KTD5).
 
 const assert = require('assert');
+const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { Given, When, Then } = require('@cucumber/cucumber');
+const { BeforeAll, Given, When, Then } = require('@cucumber/cucumber');
 
 Given('an existing file', function () {
   const file = path.join(this.dir, `file-${this.resources.length + 1}`);
@@ -44,9 +45,6 @@ Then('the export is a function', function () {
 });
 
 // --- @consumer: module shape and types (ts runs the repo's TypeScript against the install)
-
-const childProcess = require('child_process');
-const { BeforeAll } = require('@cucumber/cucumber');
 
 const TSC = path.resolve(__dirname, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc');
 const tsc = (project, extra = []) =>
