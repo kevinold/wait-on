@@ -148,8 +148,8 @@ pub fn size_report(pack: &Pack) -> Sizes {
 }
 
 /// Per-addon unpacked ceiling and full-tarball packed ceiling (R24).
-pub const ADDON_BUDGET: u64 = 3_145_728;
-pub const PACKED_BUDGET: u64 = 10_485_760;
+const ADDON_BUDGET: u64 = 3_145_728;
+const PACKED_BUDGET: u64 = 10_485_760;
 
 /// Budget problems, one per offending target; the packed total only counts on full packs.
 pub fn check_budget(sizes: &Sizes, host_only: bool) -> Vec<String> {
