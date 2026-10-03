@@ -54,6 +54,20 @@ async function httpServer(status) {
   return { port: server.address().port, close: closer(server) };
 }
 
+// answers after `ms`, recording the most requests it held at once (simultaneous)
+async function slowHttpServer(status, ms) {
+  const counts = { inFlight: 0, peak: 0 };
+  const server = http.createServer((req, res) => {
+    counts.peak = Math.max(counts.peak, ++counts.inFlight);
+    setTimeout(() => {
+      counts.inFlight--;
+      answering(status)(req, res);
+    }, ms);
+  });
+  await listening(server, 0, '127.0.0.1');
+  return { port: server.address().port, counts, close: closer(server) };
+}
+
 // openssl is required: the contract allows no skipped scenarios (R2), so a missing tool fails
 async function httpsServer(status) {
   const tls = tlsFixture();
@@ -83,4 +97,13 @@ async function httpUnixServer(dir, status) {
   return { path: file, close: closer(server) };
 }
 
-module.exports = { socketPath, tcpServer, freePort: getFreePort, httpServer, httpsServer, unixServer, httpUnixServer };
+module.exports = {
+  socketPath,
+  tcpServer,
+  freePort: getFreePort,
+  httpServer,
+  slowHttpServer,
+  httpsServer,
+  unixServer,
+  httpUnixServer
+};
