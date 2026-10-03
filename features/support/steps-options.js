@@ -23,6 +23,11 @@ async function serveHttp(world, start) {
   world.addResource(`http://127.0.0.1:${world.server.port}/`, { port: world.server.port });
 }
 
+Given('a TCP server that starts listening after {int}ms', async function (ms) {
+  const { port } = await this.serve(() => servers.delayedTcpServer('127.0.0.1', ms));
+  this.addResource(`tcp:127.0.0.1:${port}`, { port });
+});
+
 Given('an HTTP server answering {int} after {int}ms', function (status, ms) {
   return serveHttp(this, () => servers.slowHttpServer(status, ms));
 });
