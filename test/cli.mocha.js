@@ -6,6 +6,7 @@ const http = require('http');
 const path = require('path');
 const temp = require('temp');
 const mkdirp = require('mkdirp');
+const stubProxy = require('./helpers/stub-proxy');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -601,6 +602,22 @@ describe('cli', function () {
   });
 
   context('resources are specified in config', () => {
+    // L5: the engine comes from the inherited env, so this runs on Rust under rust*.
+    it('should succeed through the proxy object named in the config file', async function () {
+      const proxy = await stubProxy.start();
+      httpServer = http.createServer((req, res) => res.end('data'));
+      await new Promise((resolve) => httpServer.listen(0, 'localhost', resolve));
+      const dir = temp.mkdirSync();
+      const config = path.join(dir, 'proxy-config.js');
+      const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port) };
+      const resources = [`http://localhost:${httpServer.address().port}/`];
+      fs.writeFileSync(config, `module.exports = ${JSON.stringify({ resources, proxy: proxyObj })};`);
+      const code = await new Promise((resolve) => execCLI(['--config', config].concat(FAST_OPTS), {}).on('exit', resolve));
+      await proxy.close();
+      expect(code).to.equal(0);
+      expect(proxy.requests).to.have.length.of.at.least(1);
+    });
+
     it('should succeed when http resources become available later', function (done) {
       setTimeout(function () {
         httpServer = http.createServer().on('request', function (req, res) {
@@ -898,6 +915,54 @@ describe('cli', function () {
           done();
         });
       });
+    });
+  });
+
+  // L7 U6 (AE-L7-4): the same CLI run under js and rust-strict (Rust half skipped without
+  // a host prebuild) prints the same lines, pid aside.
+  describe('log and verbose output on either engine', function () {
+    this.timeout(10000);
+    const { runCLI } = require('./helpers/engine-env');
+    const { addonPath } = require('../lib/engine');
+    const ENGINES = fs.existsSync(addonPath({})) ? ['js', 'rust-strict'] : ['js'];
+    const withoutPid = (s) => s.replace(/wait-on\(\d+\)/g, 'wait-on(PID)');
+    const runAll = (args) =>
+      ENGINES.map((engine) => {
+        const r = runCLI({ WAIT_ON_ENGINE: engine }, args);
+        return { code: r.code, stdout: withoutPid(r.stdout), stderr: withoutPid(r.stderr) };
+      });
+
+    it('prints the same -l lines on both engines for a ready file', function () {
+      const file = path.join(temp.mkdirSync('wait-on-cli-loop'), 'f');
+      fs.writeFileSync(file, 'x');
+      const runs = runAll([file, '-l', '-i', '50', '-w', '50', '-t', '2000']);
+      expect(runs[0]).to.deep.equal({ code: 0, stdout: `waiting for 1 resources: ${file}\nwait-on(PID) complete\n`, stderr: '' });
+      for (const r of runs) expect(r).to.deep.equal(runs[0]);
+    });
+
+    it('prints the waiting, stabilized and complete -v lines in order on both engines for a ready file', function () {
+      const file = path.join(temp.mkdirSync('wait-on-cli-loop'), 'f');
+      fs.writeFileSync(file, 'x');
+      const wanted = [`waiting for 1 resources: ${file}`, `  file stabilized at size:1 file:${file}`, 'wait-on(PID) complete'];
+      for (const r of runAll([file, '-v', '-i', '50', '-w', '50', '-t', '2000'])) {
+        expect(r.code).to.equal(0);
+        const lines = r.stdout.split('\n');
+        const at = wanted.map((w) => lines.indexOf(w));
+        expect(at, r.stdout).to.not.include(-1);
+        expect(at).to.deep.equal([...at].sort((a, b) => a - b));
+      }
+    });
+
+    it('prints the same -l output and error line and exits 1 on both engines when a file never appears', function () {
+      const file = path.join(temp.mkdirSync('wait-on-cli-loop'), 'missing');
+      // stderr's first line only: the stack frames below it name each engine's own module
+      const runs = runAll([file, '-l', '-t', '300']).map((r) => ({ ...r, stderr: r.stderr.split('\n')[0] }));
+      expect(runs[0]).to.deep.equal({
+        code: 1,
+        stdout: `waiting for 1 resources: ${file}\nwait-on(PID) Timed out waiting for: ${file}; exiting with error\n`,
+        stderr: `Error: Timed out waiting for: ${file}`
+      });
+      for (const r of runs) expect(r).to.deep.equal(runs[0]);
     });
   });
 });

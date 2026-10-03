@@ -10,7 +10,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { expect } = require('chai');
-const { runCli, getFreePort, socketPathIn, tempDir, listening, T, APPEAR, FAST_OPTS } = require('./helpers/cli-conformance');
+const { runCli, getFreePort, socketPathIn, tempDir, listening, T, APPEAR, FAST_OPTS, expectElapsed } = require('./helpers/cli-conformance');
 
 describe('cli conformance: file / tcp / socket / cli (LT4a)', function () {
   const servers = [];
@@ -57,14 +57,14 @@ describe('cli conformance: file / tcp / socket / cli (LT4a)', function () {
       later(() => fs.writeFileSync(a, 'data'));
       const r = await runCli([a].concat(FAST_OPTS));
       expect(r.code, r.stderr).to.equal(0);
-      expect(r.elapsedMs).to.be.at.least(APPEAR - 150);
+      expectElapsed(r, APPEAR);
     });
 
     it('times out non-zero when a file never appears', async function () {
       const dir = mkTmp();
       const r = await runCli([path.join(dir, 'nope')].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
 
     it('reverse mode succeeds when files are absent', async function () {
@@ -94,7 +94,7 @@ describe('cli conformance: file / tcp / socket / cli (LT4a)', function () {
       const port = await getFreePort();
       const r = await runCli(['tcp:127.0.0.1:' + port].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
 
     it('reverse mode succeeds when a tcp host is unreachable', async function () {
@@ -117,7 +117,7 @@ describe('cli conformance: file / tcp / socket / cli (LT4a)', function () {
       const sock = socketPathIn(dir);
       const r = await runCli(['socket:' + sock].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
   });
 
