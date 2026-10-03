@@ -4,6 +4,7 @@ mod bench;
 mod build_napi;
 mod ci;
 mod contract;
+mod dependents;
 mod hooks;
 mod host;
 mod package;
@@ -45,6 +46,11 @@ const COMMANDS: &[(&str, &str, Run)] = &[
         "contract",
         "the consumer contract on the packed package [--tgz P] [--fixture F] [--engine E] (run through npm)",
         contract::run,
+    ),
+    (
+        "dependents",
+        "published dependents' suites on the packed package, three ways [--only N] [--include-optional] [--tgz P] [--keep] (run through npm)",
+        dependents::run,
     ),
     (
         "bench-startup",

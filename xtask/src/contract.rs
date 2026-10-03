@@ -106,7 +106,7 @@ pub fn tags(fixture: &str) -> String {
 }
 
 /// `parent` without `SCRUBBED`.
-fn scrubbed(parent: &HashMap<String, String>) -> HashMap<String, String> {
+pub(crate) fn scrubbed(parent: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env = parent.clone();
     for key in SCRUBBED {
         host::env_remove(&mut env, key);
@@ -138,7 +138,7 @@ pub fn run(args: &[String]) -> i32 {
     host::exit_code(contract(args).map(|()| 0))
 }
 
-fn preload_path(root: &Path) -> PathBuf {
+pub(crate) fn preload_path(root: &Path) -> PathBuf {
     root.join("features")
         .join("support")
         .join("proof-preload.js")
@@ -163,7 +163,7 @@ pub fn run_with(tgz: &Path, npm: &str) -> Result<(), String> {
     run_cells(&root, npm, tgz, &plan.cells)
 }
 
-fn pack(root: &Path, npm: &str) -> Result<PathBuf, String> {
+pub(crate) fn pack(root: &Path, npm: &str) -> Result<PathBuf, String> {
     let dest = package::fresh_temp_dir("contract-pack")?;
     let pack = package::npm_pack(root, npm, Some(&dest))?;
     Ok(dest.join(pack.filename))

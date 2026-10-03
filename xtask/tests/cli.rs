@@ -7,7 +7,7 @@ fn xtask(args: &[&str]) -> Output {
         .expect("spawn xtask")
 }
 
-const SUBCOMMANDS: [&str; 10] = [
+const SUBCOMMANDS: [&str; 11] = [
     "ci",
     "fmt",
     "lint",
@@ -16,6 +16,7 @@ const SUBCOMMANDS: [&str; 10] = [
     "build-napi",
     "package",
     "contract",
+    "dependents",
     "bench-startup",
     "hooks",
 ];
@@ -88,6 +89,29 @@ fn package_refuses_to_run_outside_npm() {
 fn contract_refuses_to_run_outside_npm() {
     let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["contract", "--engine", "js"])
+        .env_remove("npm_execpath")
+        .output()
+        .expect("spawn xtask");
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("run this through npm"), "{stderr}");
+}
+
+#[test]
+fn dependents_names_an_unknown_entry_before_cloning_anything() {
+    let out = xtask(&["dependents", "--only", "nope"]);
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--only nope") && stderr.contains("start-server-and-test"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn dependents_refuses_to_run_outside_npm() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["dependents", "--only", "start-server-and-test"])
         .env_remove("npm_execpath")
         .output()
         .expect("spawn xtask");
