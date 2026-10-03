@@ -16,12 +16,35 @@ Given('the installed package has no addon for this host', function () {
   this.vars.addon = path.join(this.project, 'node_modules', 'wait-on', 'prebuilds', this.hostDir, 'wait-on.node');
 });
 
-Given('an HTTP server answering {int} after {int}ms', async function (status, ms) {
-  const server = await servers.slowHttpServer(status, ms);
-  this.cleanups.push(server.close);
-  this.server = server;
-  this.vars.port = server.port;
-  this.resources.push(`http://127.0.0.1:${server.port}/`);
+// starts an http server and registers `http://127.0.0.1:<port>/` as the next resource
+async function serveHttp(world, start) {
+  const server = await start();
+  world.cleanups.push(server.close);
+  world.server = server;
+  world.vars.port = server.port;
+  world.resources.push(`http://127.0.0.1:${server.port}/`);
+}
+
+Given('an HTTP server answering {int} after {int}ms', function (status, ms) {
+  return serveHttp(this, () => servers.slowHttpServer(status, ms));
+});
+
+Given('an HTTP server answering {int} that records requests', function (status) {
+  return serveHttp(this, () => servers.recordingHttpServer(status));
+});
+
+Given('an HTTP server redirecting to a page answering 200', function () {
+  return serveHttp(this, servers.redirectingHttpServer);
+});
+
+Given('an HTTP server that never answers', function () {
+  return serveHttp(this, servers.silentHttpServer);
+});
+
+Then('the server saw the header {string} as {string}', function (name, value) {
+  const { requests } = this.server;
+  assert.ok(requests.length > 0, 'the server saw no request');
+  for (const { headers } of requests) assert.strictEqual(headers[name], value);
 });
 
 Then(/^the server saw at (most|least) (\d+) requests? in flight$/, function (bound, n) {

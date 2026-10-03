@@ -3,10 +3,12 @@
 // node run.js '<json opts>' [--callback]
 // Calls the installed wait-on and prints one JSON line after any log output:
 // {exportType, outcome, errorName, errorMessage, cbCalls, cbArg, cbSync, returned, elapsedMs}.
+// JSON has no functions, so a string validateStatus is the body of `function (status)`.
 
 const waitOn = require('wait-on');
 
 const opts = JSON.parse(process.argv[2]);
+if (typeof opts.validateStatus === 'string') opts.validateStatus = new Function('status', opts.validateStatus);
 const start = Date.now();
 const result = { exportType: typeof waitOn, cbCalls: 0 };
 const settle = (err) => {

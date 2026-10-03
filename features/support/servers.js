@@ -54,6 +54,37 @@ async function httpServer(status) {
   return { port: server.address().port, close: closer(server) };
 }
 
+// records each request's method, url and headers (headers, auth)
+async function recordingHttpServer(status) {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push({ method: req.method, url: req.url, headers: req.headers });
+    answering(status)(req, res);
+  });
+  server.keepAliveTimeout = 1;
+  await listening(server, 0, '127.0.0.1');
+  return { port: server.address().port, requests, close: closer(server) };
+}
+
+// `/` answers 302 to `/ok`, which answers 200 (followRedirect)
+async function redirectingHttpServer() {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/ok') return answering(200)(req, res);
+    res.writeHead(302, { location: '/ok' });
+    res.end();
+  });
+  server.keepAliveTimeout = 1;
+  await listening(server, 0, '127.0.0.1');
+  return { port: server.address().port, close: closer(server) };
+}
+
+// accepts requests and never answers (httpTimeout); close() drops the held connections
+async function silentHttpServer() {
+  const server = http.createServer(() => {});
+  await listening(server, 0, '127.0.0.1');
+  return { port: server.address().port, close: closer(server) };
+}
+
 // answers after `ms`, recording the most requests it held at once (simultaneous)
 async function slowHttpServer(status, ms) {
   const counts = { inFlight: 0, peak: 0 };
@@ -102,6 +133,9 @@ module.exports = {
   tcpServer,
   freePort: getFreePort,
   httpServer,
+  recordingHttpServer,
+  redirectingHttpServer,
+  silentHttpServer,
   slowHttpServer,
   httpsServer,
   unixServer,
