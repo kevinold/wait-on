@@ -3,10 +3,24 @@
 // @cli steps: the installed bin/wait-on under node (KTD4, no .cmd shim).
 
 const assert = require('assert');
-const { When, Then } = require('@cucumber/cucumber');
+const fs = require('fs');
+const path = require('path');
+const { Given, When, Then } = require('@cucumber/cucumber');
+
+// js or json; placeholders are JSON-escaped, which is also a valid js string literal body
+Given('a config file {string} containing:', function (name, text) {
+  const file = path.join(this.dir, name);
+  fs.writeFileSync(file, this.fill(text, { json: true }));
+  this.vars.config = file;
+});
 
 When('I run wait-on with {string}', async function (args) {
   await this.cli(this.fill(args).split(' '));
+});
+
+// one argument per line, so an argument may hold spaces
+When('I run wait-on with the arguments:', async function (args) {
+  await this.cli(args.split(/\r?\n/).map((arg) => this.fill(arg)));
 });
 
 Then('it exits {int}', function (code) {
