@@ -18,6 +18,19 @@ When('I run wait-on with {string}', async function (args) {
   await this.cli(this.fill(args).split(' '));
 });
 
+When('I run wait-on with no arguments', async function () {
+  await this.cli([]);
+});
+
+// a stopped child writes no proof record, so such scenarios are @route:none
+When('I run wait-on with {string} and stop it after {int}ms', async function (args, ms) {
+  await this.cli(this.fill(args).split(' '), { killAfter: ms });
+});
+
+Then('it was still running', function () {
+  assert.ok(this.run.stopped, `it exited ${this.run.code}:\n${this.run.stderr}`);
+});
+
 // one argument per line, so an argument may hold spaces
 When('I run wait-on with the arguments:', async function (args) {
   await this.cli(args.split(/\r?\n/).map((arg) => this.fill(arg)));

@@ -108,10 +108,15 @@ Given('a command that never exits', function () {
 });
 
 // log lines carry the runner's pid, which the step cannot know in advance
-const logLines = (world) => world.result.lines.map((line) => world.normalize(line).replace(/^wait-on\(\d+\)/, 'wait-on(<pid>)'));
+// The API runner's lines map resources to <resource N>; CLI output keeps them as typed (steps-cli).
+function logLines(world) {
+  const lines = world.result ? world.result.lines : world.run.stdout.split(/\r?\n/).filter(Boolean);
+  const resources = Boolean(world.result);
+  return lines.map((line) => world.normalize(line, { resources }).replace(/^wait-on\(\d+\)/, 'wait-on(<pid>)'));
+}
 
 Then('stdout is empty', function () {
-  assert.deepStrictEqual(this.result.lines, []);
+  assert.deepStrictEqual(logLines(this), []);
 });
 
 Then('stdout is:', function (text) {

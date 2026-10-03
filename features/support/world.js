@@ -53,7 +53,8 @@ class ContractWorld extends World {
     return out;
   }
 
-  spawn(args, { env = this.env } = {}) {
+  // killAfter: stop a child still running after that many ms (`stopped` is then true)
+  spawn(args, { env = this.env, killAfter } = {}) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       const child = childProcess.spawn(process.execPath, args, {
@@ -62,10 +63,15 @@ class ContractWorld extends World {
       });
       let stdout = '';
       let stderr = '';
+      let stopped = false;
+      const timer = killAfter && setTimeout(() => (stopped = child.kill()), killAfter);
       child.stdout.on('data', (d) => (stdout += d));
       child.stderr.on('data', (d) => (stderr += d));
       child.on('error', reject);
-      child.on('close', (code) => resolve({ code, stdout, stderr, elapsedMs: Date.now() - start }));
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr, stopped, elapsedMs: Date.now() - start });
+      });
     });
   }
 
@@ -85,9 +91,9 @@ class ContractWorld extends World {
     this.run = run;
   }
 
-  async cli(args, { env } = {}) {
+  async cli(args, { env, killAfter } = {}) {
     const bin = path.join(this.project, 'node_modules', 'wait-on', 'bin', 'wait-on');
-    this.run = await this.spawn([bin, ...args], { env });
+    this.run = await this.spawn([bin, ...args], { env, killAfter });
   }
 
   proofRecords() {
