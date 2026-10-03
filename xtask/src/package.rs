@@ -123,6 +123,10 @@ pub fn check_manifest(manifest: &Value) -> Vec<String> {
     if manifest.get("optionalDependencies").is_some() {
         problems.push("optionalDependencies is declared".to_string());
     }
+    // R16: deep requires (wait-on/lib/engine) and the ESM named-import failure are pinned
+    if manifest.get("exports").is_some() {
+        problems.push("exports is declared".to_string());
+    }
     problems
 }
 
@@ -811,11 +815,13 @@ mod tests {
     }
 
     #[test]
-    fn check_manifest_rejects_lifecycle_scripts_and_optional_deps_but_not_the_repo() {
+    fn check_manifest_rejects_lifecycle_scripts_optional_deps_and_exports_but_not_the_repo() {
         let joined = |v: Value| check_manifest(&v).join("\n");
         assert!(joined(json!({"scripts": {"postinstall": "x"}})).contains("postinstall"));
         assert!(joined(json!({"scripts": {"prepare": "x"}})).contains("prepare"));
         assert!(joined(json!({"optionalDependencies": {}})).contains("optionalDependencies"));
+        // an exports map would silently break deep requires and change the ESM named import
+        assert!(joined(json!({"exports": {}})).contains("exports"));
         let repo = std::fs::read_to_string(host::repo_root().join("package.json")).unwrap();
         assert!(check_manifest(&serde_json::from_str(&repo).unwrap()).is_empty());
     }
