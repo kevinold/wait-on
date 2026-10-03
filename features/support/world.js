@@ -8,12 +8,15 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { World, setWorldConstructor, setDefaultTimeout } = require('@cucumber/cucumber');
+const { AfterAll, World, setWorldConstructor, setDefaultTimeout } = require('@cucumber/cucumber');
 
 // real-clock subprocess runs (AGENTS.md clock exception); scenarios bound their own waits
 setDefaultTimeout(30 * 1000);
 
 const RUNNERS = { cjs: 'run.js', esm: 'run.mjs', ts: path.join('dist', 'run.js') };
+
+let noAddon; // see noAddonProject
+AfterAll(() => noAddon && fs.rmSync(noAddon, { recursive: true, force: true }));
 
 class ContractWorld extends World {
   constructor(options) {
@@ -94,6 +97,16 @@ class ContractWorld extends World {
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line));
+  }
+
+  // the installed project copied once per cucumber run, minus prebuilds/<host> (U4 engine env)
+  noAddonProject() {
+    if (!noAddon) {
+      noAddon = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wait-on-contract-no-addon-')));
+      fs.cpSync(this.project, noAddon, { recursive: true });
+      fs.rmSync(path.join(noAddon, 'node_modules', 'wait-on', 'prebuilds', this.hostDir), { recursive: true });
+    }
+    return noAddon;
   }
 
   addonDir() {
