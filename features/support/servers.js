@@ -25,19 +25,37 @@ const closer = (server) => () => {
   return new Promise((resolve) => server.close(() => resolve()));
 };
 
-async function tcpServer(host) {
+async function tcpServer(host, port = 0) {
   const sockets = new Set();
   const server = net.createServer((s) => {
     sockets.add(s);
     s.on('close', () => sockets.delete(s));
   });
-  await listening(server, 0, host);
+  await listening(server, port, host);
   const close = closer(server);
   return {
     port: server.address().port,
     close: () => {
       for (const s of sockets) s.destroy();
       return close();
+    }
+  };
+}
+
+// a port reserved now that starts listening `ms` later (real clock), so the first checks are refused
+async function delayedTcpServer(host, ms) {
+  const port = await getFreePort();
+  let started;
+  const timer = setTimeout(() => {
+    // a lost port shows as the scenario's own failure
+    started = tcpServer(host, port).catch(() => null);
+  }, ms);
+  return {
+    port,
+    close: async () => {
+      clearTimeout(timer);
+      const server = await started;
+      if (server) await server.close();
     }
   };
 }
@@ -132,6 +150,7 @@ async function httpUnixServer(dir, status) {
 module.exports = {
   socketPath,
   tcpServer,
+  delayedTcpServer,
   freePort: getFreePort,
   httpServer,
   recordingHttpServer,

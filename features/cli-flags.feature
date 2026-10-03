@@ -96,7 +96,7 @@ Feature: Every command-line flag
 
   @kind:good
   Scenario: -i sets the interval
-    Given an existing file
+    Given a TCP server that starts listening after 1000ms
     When I run wait-on with "-i 1500 -t 5000 <resource 1>"
     Then it exits 0
     And it took about 1500ms
