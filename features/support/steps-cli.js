@@ -3,10 +3,37 @@
 // @cli steps: the installed bin/wait-on under node (KTD4, no .cmd shim).
 
 const assert = require('assert');
-const { When, Then } = require('@cucumber/cucumber');
+const fs = require('fs');
+const path = require('path');
+const { Given, When, Then } = require('@cucumber/cucumber');
+
+// js or json; placeholders are JSON-escaped, which is also a valid js string literal body
+Given('a config file {string} containing:', function (name, text) {
+  const file = path.join(this.dir, name);
+  fs.writeFileSync(file, this.fill(text, { json: true }));
+  this.vars.config = file;
+});
 
 When('I run wait-on with {string}', async function (args) {
   await this.cli(this.fill(args).split(' '));
+});
+
+When('I run wait-on with no arguments', async function () {
+  await this.cli([]);
+});
+
+// a stopped child writes no proof record, so such scenarios are @route:none
+When('I run wait-on with {string} and stop it after {int}ms', async function (args, ms) {
+  await this.cli(this.fill(args).split(' '), { killAfter: ms });
+});
+
+Then('it was still running', function () {
+  assert.ok(this.run.stopped, `it exited ${this.run.code}:\n${this.run.stderr}`);
+});
+
+// one argument per line, so an argument may hold spaces
+When('I run wait-on with the arguments:', async function (args) {
+  await this.cli(args.split(/\r?\n/).map((arg) => this.fill(arg)));
 });
 
 Then('it exits {int}', function (code) {

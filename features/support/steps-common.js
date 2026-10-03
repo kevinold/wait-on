@@ -86,6 +86,10 @@ When('the TypeScript consumer gains the line {string}', function (line) {
   this.tscRun = tsc(dir);
 });
 
+Then('the type check passes', function () {
+  assert.strictEqual(this.tscRun.status, 0, this.tscRun.stdout + this.tscRun.stderr);
+});
+
 Then('the type check fails with {string}', function (code) {
   assert.notStrictEqual(this.tscRun.status, 0, 'tsc passed');
   assert.ok(this.tscRun.stdout.includes(code), this.tscRun.stdout + this.tscRun.stderr);
