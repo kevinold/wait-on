@@ -87,7 +87,8 @@ has syntax worth failing fast on.
 - `npm run test:coverage` — nyc + mocha.
 - `npm run contract` — the library-consumer contract: `features/*.feature` run by cucumber-js
   against the packed, installed package in CJS, ESM and TypeScript fixture projects under
-  `js` and `rust-strict` (`cargo xtask contract`; `ci:rs` runs it). See
+  `js` and `rust-strict` (`cargo xtask contract`; `ci:rs` runs it). The `@engine` scenarios
+  also run in Rust (`cargo test -p wait-on-features --test features`, cucumber-rs). See
   [`docs/guides/testing.md`](docs/guides/testing.md#consumer-contract).
 - Node engines floor is `>=22.19.0`.
 

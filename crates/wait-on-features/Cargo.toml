@@ -1,0 +1,19 @@
+[package]
+name = "wait-on-features"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Runs the `@engine` scenarios of `features/*.feature` against `waiter::wait` (R17). A test
+# crate: nothing depends on it, so cucumber stays out of the napi addon's closure (R18).
+[dev-dependencies]
+cucumber = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+wait-on-core = { path = "../wait-on-core" }
+
+[[test]]
+name = "features"
+harness = false

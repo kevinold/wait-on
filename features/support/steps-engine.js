@@ -90,7 +90,17 @@ Then('the wait succeeds', function () {
   assert.strictEqual(this.result.outcome, 'resolved', JSON.stringify(this.result));
 });
 
+function failsWith(world, message) {
+  assert.strictEqual(world.result.outcome, 'rejected', JSON.stringify(world.result));
+  assert.strictEqual(world.normalize(world.result.errorMessage), message);
+}
+
 Then('the wait fails with:', function (message) {
-  assert.strictEqual(this.result.outcome, 'rejected', JSON.stringify(this.result));
-  assert.strictEqual(this.normalize(this.result.errorMessage), message);
+  failsWith(this, message);
+});
+
+// Scenario Outlines use this form: cucumber-rs rejects a `<resource 1>` docstring there,
+// reading it as an Examples column it cannot resolve.
+Then('the wait times out naming resource {int}', function (n) {
+  failsWith(this, `Timed out waiting for: <resource ${n}>`);
 });
