@@ -95,7 +95,7 @@ Feature: Every command-line flag
     And it took about 1500ms
 
   @kind:good
-  Scenario: -i sets the interval, and the window grows to it
+  Scenario: -i sets the interval
     Given an existing file
     When I run wait-on with "-i 1500 -t 5000 <resource 1>"
     Then it exits 0

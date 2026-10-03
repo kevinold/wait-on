@@ -45,9 +45,16 @@ Then('the server saw the header {string} as {string}', function (name, value) {
   for (const { headers } of requests) assert.strictEqual(headers[name], value);
 });
 
+// proves a direct path: the origin itself answered, not only that the proxy saw nothing
+Then('the server saw the check', function () {
+  assert.ok(this.server.requests.length > 0, 'the server saw no request');
+});
+
+// "at most" also needs one request, or a server that was never reached would pass
 Then(/^the server saw at (most|least) (\d+) requests? in flight$/, function (bound, n) {
   const { peak } = this.server.counts;
-  assert.ok(bound === 'most' ? peak <= Number(n) : peak >= Number(n), `peak ${peak} in flight`);
+  const ok = bound === 'most' ? peak >= 1 && peak <= Number(n) : peak >= Number(n);
+  assert.ok(ok, `peak ${peak} in flight`);
 });
 
 // the fixture's PEMs become <cert>, <key>, <otherCert>, <encryptedKey> and <passphrase>
@@ -107,7 +114,7 @@ Then('the proxy carried nothing', function () {
 Given('a command that never exits', function () {
   const script = path.join(this.dir, 'hang.js');
   fs.writeFileSync(script, 'setTimeout(() => {}, 5000);\n');
-  this.addResource(`command:node ${script}`);
+  this.addResource(`command:node "${script}"`); // quoted: a temp dir may hold spaces
 });
 
 // Log lines carry the runner's pid, which the step cannot know in advance. The API runner's
@@ -118,8 +125,10 @@ function logLines(world) {
   return lines.map((line) => world.normalize(line, { resources }).replace(/^wait-on\(\d+\)/, 'wait-on(<pid>)'));
 }
 
+// the CLI's raw stdout, so a stray blank line fails too
 Then('stdout is empty', function () {
-  assert.deepStrictEqual(logLines(this), []);
+  if (this.result) assert.deepStrictEqual(this.result.lines, []);
+  else assert.strictEqual(this.run.stdout, '');
 });
 
 Then('stdout is:', function (text) {

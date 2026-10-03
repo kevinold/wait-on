@@ -107,26 +107,28 @@ Feature: TLS material and proxies
   Scenario: proxy false ignores HTTP_PROXY
     Given a proxy that records what it carries
     And the environment variable HTTP_PROXY is "<proxy>"
-    And an HTTP server answering 200
+    And an HTTP server answering 200 that records requests
     When the consumer calls waitOn with:
       """
       { "resources": ["<resource 1>"], "timeout": 2000, "proxy": false }
       """
     Then the wait resolves
     And the proxy carried nothing
+    And the server saw the check
 
   @kind:good
   Scenario: NO_PROXY sends a matching host direct
     Given a proxy that records what it carries
     And the environment variable HTTP_PROXY is "<proxy>"
     And the environment variable NO_PROXY is "127.0.0.1"
-    And an HTTP server answering 200
+    And an HTTP server answering 200 that records requests
     When the consumer calls waitOn with:
       """
       { "resources": ["<resource 1>"], "timeout": 2000 }
       """
     Then the wait resolves
     And the proxy carried nothing
+    And the server saw the check
 
   # Today's behaviour, pinned: behind an env proxy the JS engine applies no TLS options, so
   # the tunnelled check verifies against the default roots even without strictSSL.
