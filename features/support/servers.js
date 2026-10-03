@@ -113,6 +113,22 @@ async function httpsServer(status) {
   };
 }
 
+// a self-signed https server answering 200 (tls: the fixture's PEMs); with clientCert it
+// requires a client certificate its own cert verifies and records each `authorized`
+async function tlsServer({ clientCert = false } = {}) {
+  const tls = tlsFixture();
+  if (!tls) throw new Error('openssl required for the https scenarios (not found on PATH)');
+  const authorized = [];
+  const mtls = clientCert ? { requestCert: true, rejectUnauthorized: true, ca: tls.cert } : {};
+  const server = https.createServer({ key: tls.key, cert: tls.cert, ...mtls }, (req, res) => {
+    authorized.push(req.socket.authorized);
+    answering(200)(req, res);
+  });
+  await listening(server, 0, '127.0.0.1');
+  const close = closer(server);
+  return { port: server.address().port, tls, authorized, close: () => close().then(tls.cleanup) };
+}
+
 async function unixServer(dir) {
   const file = socketPath(dir);
   const server = await listening(
@@ -138,6 +154,7 @@ module.exports = {
   silentHttpServer,
   slowHttpServer,
   httpsServer,
+  tlsServer,
   unixServer,
   httpUnixServer
 };

@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { Given, Then } = require('@cucumber/cucumber');
 const servers = require('./servers');
+const stubProxy = require('../../test/helpers/stub-proxy');
 
 // Runs the consumer from a copy whose host addon is gone. No engine can be dlopened there,
 // so the route proof judges the run as the JS engine's whatever engine cucumber runs under.
@@ -50,6 +51,45 @@ Then('the server saw the header {string} as {string}', function (name, value) {
 Then(/^the server saw at (most|least) (\d+) requests? in flight$/, function (bound, n) {
   const { peak } = this.server.counts;
   assert.ok(bound === 'most' ? peak <= Number(n) : peak >= Number(n), `peak ${peak} in flight`);
+});
+
+async function serveTls(world, opts) {
+  const server = await servers.tlsServer(opts);
+  world.cleanups.push(server.close);
+  world.server = server;
+  const { cert, key, otherCert, encryptedKey, passphrase } = server.tls;
+  Object.assign(world.vars, { port: server.port, cert, key, otherCert, encryptedKey, passphrase });
+  world.resources.push(`https://127.0.0.1:${server.port}/`);
+}
+
+Given('an HTTPS server with a self-signed certificate', function () {
+  return serveTls(this);
+});
+
+Given('an HTTPS server that requires a client certificate', function () {
+  return serveTls(this, { clientCert: true });
+});
+
+Then('the server saw an authorized client certificate', function () {
+  assert.ok(this.server.authorized.includes(true), `authorized: ${this.server.authorized}`);
+});
+
+// the counting stub proxy the mocha suite uses: proves a check took the proxy path
+Given('a proxy that records what it carries', async function () {
+  const proxy = await stubProxy.start();
+  this.cleanups.push(proxy.close);
+  this.proxy = proxy;
+  Object.assign(this.vars, { proxy: proxy.url, proxyPort: new URL(proxy.url).port });
+});
+
+const carried = (proxy) => [...proxy.requests, ...proxy.connects].map((r) => r.line);
+
+Then('the proxy carried {string}', function (line) {
+  assert.ok(carried(this.proxy).includes(this.fill(line)), `carried: ${carried(this.proxy).join(', ')}`);
+});
+
+Then('the proxy carried nothing', function () {
+  assert.deepStrictEqual(carried(this.proxy), []);
 });
 
 // "never" is 5s, past every scenario's timeout: an attempt started just before the wait

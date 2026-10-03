@@ -14,7 +14,7 @@ Given('a TCP server on localhost', async function () {
 });
 
 Given('the environment variable {word} is {string}', function (name, value) {
-  this.env[name] = value;
+  this.env[name] = this.fill(value);
 });
 
 Then(/^the callback was called once, (later|synchronously), with (undefined|an Error)$/, function (timing, arg) {
