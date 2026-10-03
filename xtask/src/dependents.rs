@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::ci::strings;
 use crate::{contract, host, package};
 
 const MANIFEST: &str = include_str!("../assets/dependents.json");
@@ -68,10 +69,6 @@ fn entry(v: &Value) -> Result<Entry, String> {
         build: list("build")?,
         run: list("run")?,
     })
-}
-
-fn strings(args: &[&str]) -> Vec<String> {
-    args.iter().map(|s| s.to_string()).collect()
 }
 
 /// `git` args cloning `entry` at its tag into `dest`.
@@ -195,15 +192,15 @@ pub fn proof_verdict(records: &str, addon: &str) -> Result<(), String> {
 /// One run's env: the parent scrubbed of proxies and the addon override (R21), and
 /// `npm_config_ignore_scripts` so npm never runs a dependent's `pre`/`post` hooks (R19:
 /// start-server-and-test's `pretest` rewrites sources). `None` is the baseline: the published
-/// wait-on, no engine switch, no preload. An engine also gets the proof preload.
+/// wait-on, no engine switch, no preload. An engine also gets the proof preload, writing to
+/// its proof file.
 pub fn run_env(
-    engine: Option<&str>,
-    proof: &Path,
+    engine: Option<(&str, &Path)>,
     preload: &Path,
     parent: &HashMap<String, String>,
 ) -> HashMap<String, String> {
     let mut env = match engine {
-        Some(engine) => {
+        Some((engine, proof)) => {
             let mut env = contract::cell_env(engine, preload, parent);
             host::env_set(&mut env, "WAIT_ON_PROOF_FILE", &proof.to_string_lossy());
             env
@@ -239,13 +236,13 @@ pub fn verdict(name: &str, rows: &[Row], proof: &Result<(), String>) -> (String,
         "command", "baseline", "js", "rust-strict"
     );
     for r in rows {
-        let label = match (r.baseline, r.js && r.rust) {
-            (_, true) => "ok",
-            (true, false) => {
-                code = 1;
-                "regression"
-            }
-            (false, false) => "pre-existing",
+        let label = if r.js && r.rust {
+            "ok"
+        } else if r.baseline {
+            code = 1;
+            "regression"
+        } else {
+            "pre-existing"
         };
         table.push_str(&format!(
             "  {:<64} {:<8} {:<8} {:<11} {label}\n",
@@ -295,14 +292,20 @@ pub fn select<'a>(
     opts: &Options,
     platform: &str,
 ) -> Result<Vec<&'a Entry>, String> {
-    if let Some(only) = &opts.only
-        && !entries.iter().any(|e| &e.name == only)
-    {
-        let known: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-        return Err(format!(
-            "--only {only}: expected one of {}",
-            known.join(", ")
-        ));
+    if let Some(only) = &opts.only {
+        let Some(entry) = entries.iter().find(|e| &e.name == only) else {
+            let known: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+            return Err(format!(
+                "--only {only}: expected one of {}",
+                known.join(", ")
+            ));
+        };
+        if !entry.os.is_empty() && !entry.os.iter().any(|os| os == platform) {
+            return Err(format!(
+                "--only {only}: runs only on {}, this host is {platform}",
+                entry.os.join(", ")
+            ));
+        }
     }
     Ok(entries
         .iter()
@@ -446,13 +449,12 @@ fn run_entry(
     }
     let parent = host::env_map();
     let preload = contract::preload_path(root);
-    let none = Path::new("");
     let baseline = run_all(
         entry,
         npm,
         &clone,
         "baseline",
-        &run_env(None, none, &preload, &parent),
+        &run_env(None, &preload, &parent),
     )?;
 
     for args in swap_plan(entry, tgz) {
@@ -467,12 +469,13 @@ fn run_entry(
         .and_then(|()| resolve_check(&clone, &clone.join(&entry.subdir)))
         .map_err(|e| format!("{}: {e} (kept {})", entry.name, dir.display()))?;
 
-    let mut results = Vec::new();
-    for engine in contract::ENGINES {
+    let engine_run = |engine: &str| {
         let proof = dir.join(format!("proof-{engine}.jsonl"));
-        let env = run_env(Some(engine), &proof, &preload, &parent);
-        results.push((proof, run_all(entry, npm, &clone, engine, &env)?));
-    }
+        let env = run_env(Some((engine, &proof)), &preload, &parent);
+        run_all(entry, npm, &clone, engine, &env).map(|passed| (proof, passed))
+    };
+    let (_, js) = engine_run("js")?;
+    let (rust_proof, rust) = engine_run("rust-strict")?;
     let addon = clone
         .join("node_modules")
         .join("wait-on")
@@ -480,18 +483,15 @@ fn run_entry(
         .join(host::host_dir()?)
         .join(package::ADDON);
     let addon = std::fs::canonicalize(&addon).unwrap_or(addon);
-    let records = std::fs::read_to_string(&results[1].0).unwrap_or_default();
+    let records = std::fs::read_to_string(&rust_proof).unwrap_or_default();
     let proof = proof_verdict(&records, &package::strip_verbatim(&addon.to_string_lossy()));
 
-    let rows: Vec<Row> = entry
-        .run
-        .iter()
-        .enumerate()
-        .map(|(i, cmd)| Row {
+    let rows: Vec<Row> = (entry.run.iter().zip(baseline).zip(js).zip(rust))
+        .map(|(((cmd, baseline), js), rust)| Row {
             command: cmd.clone(),
-            baseline: baseline[i],
-            js: results[0].1[i],
-            rust: results[1].1[i],
+            baseline,
+            js,
+            rust,
         })
         .collect();
     let (table, code) = verdict(&format!("{} {}", entry.name, entry.tag), &rows, &proof);
@@ -551,8 +551,7 @@ mod tests {
     #[test]
     fn engine_runs_are_scrubbed_and_carry_the_engine_proof_and_preload() {
         let env = run_env(
-            Some("rust-strict"),
-            Path::new("/t/proof.jsonl"),
+            Some(("rust-strict", Path::new("/t/proof.jsonl"))),
             Path::new("/r/p.js"),
             &parent(),
         );
@@ -569,7 +568,7 @@ mod tests {
 
     #[test]
     fn baseline_runs_published_wait_on_without_engine_or_preload() {
-        let env = run_env(None, Path::new("/t/p"), Path::new("/r/p.js"), &parent());
+        let env = run_env(None, Path::new("/r/p.js"), &parent());
         for key in SCRUBBED
             .iter()
             .chain(&["WAIT_ON_ENGINE", "NODE_OPTIONS", "WAIT_ON_PROOF_FILE"])
@@ -701,6 +700,19 @@ mod tests {
         let err = select(&e, &only("nope"), "linux").unwrap_err();
         assert!(
             err.contains("nope") && err.contains("start-server-and-test"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn only_on_an_unsupported_os_errors_instead_of_running_nothing() {
+        let only = Options {
+            only: Some("jest-dev-server".into()),
+            ..Options::default()
+        };
+        let err = select(&entries(), &only, "darwin").unwrap_err();
+        assert!(
+            err.contains("jest-dev-server") && err.contains("linux"),
             "{err}"
         );
     }
