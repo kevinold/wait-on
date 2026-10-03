@@ -4,17 +4,24 @@ Feature: Every command-line flag
   flag takes the next argument as its value; --no-<flag> turns a flag off. The command
   exits 0 once the wait succeeds and 1 with the error as the first stderr line otherwise.
 
+  # plain scenarios, not an Outline: cucumber-rs fails a whole file on an outline `<resource 1>`
   @kind:good
-  Scenario Outline: --status-codes <codes> accepts a 403
+  Scenario: --status-codes accepts a single code
     Given an HTTP server answering 403
-    When I run wait-on with "--status-codes <codes> -t 2000 <resource 1>"
+    When I run wait-on with "--status-codes 403 -t 2000 <resource 1>"
     Then it exits 0
 
-    Examples:
-      | codes   |
-      | 403     |
-      | 400-499 |
-      | 200,403 |
+  @kind:good
+  Scenario: --status-codes accepts a range
+    Given an HTTP server answering 403
+    When I run wait-on with "--status-codes 400-499 -t 2000 <resource 1>"
+    Then it exits 0
+
+  @kind:good
+  Scenario: --status-codes accepts a list
+    Given an HTTP server answering 403
+    When I run wait-on with "--status-codes 200,403 -t 2000 <resource 1>"
+    Then it exits 0
 
   @kind:bad
   Scenario: --status-codes 200-299 does not accept a 403
