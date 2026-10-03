@@ -83,3 +83,5 @@ GitHub fires `workflow_run` and `workflow_dispatch` only for workflow files on t
 ## Why lanes cannot edit workflows
 
 KD-S7 in the [spine plan](../plans/2026-09-30-1400-feat-spike-next-rs-spine-plan.md): CI owns no lane logic. Spine lanes may not edit `.github/workflows/`; they change behavior through the hook scripts above. Any CI change a lane discovers it needs is filed as an operator PR, never folded into a lane.
+
+Pending operator follow-up: the dependents harness (`npm run dependents`, [testing.md](testing.md#dependents-harness), L19) has no CI hook. The intended wiring is a non-blocking `continue-on-error` job on `ubuntu-latest` that runs `npm run dependents -- --include-optional` after the host addon is built, called through the push-triggered `workflow_call` (a `workflow_dispatch` on `spike-next-rs` never fires).

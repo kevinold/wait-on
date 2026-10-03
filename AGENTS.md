@@ -90,6 +90,10 @@ has syntax worth failing fast on.
   `js` and `rust-strict` (`cargo xtask contract`; `ci:rs` runs it). The `@engine` scenarios
   also run in Rust (`cargo test -p wait-on-features --test features`, cucumber-rs). See
   [`docs/guides/testing.md`](docs/guides/testing.md#consumer-contract).
+- `npm run dependents` — on demand: published dependents' own suites (start-server-and-test)
+  on the published wait-on, then on the packed package under `js` and `rust-strict`
+  (`cargo xtask dependents`). See
+  [`docs/guides/testing.md`](docs/guides/testing.md#dependents-harness).
 - Node engines floor is `>=22.19.0`.
 
 ## Conventions
