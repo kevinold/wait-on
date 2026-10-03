@@ -81,6 +81,17 @@ Feature: TLS material and proxies
     And the proxy carried "HEAD http://127.0.0.1:<port>/"
 
   @kind:good
+  Scenario: a proxy object's protocol and auth reach the proxy
+    Given a proxy that records what it carries
+    And an HTTP server answering 200
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000, "proxy": { "host": "127.0.0.1", "port": <proxyPort>, "protocol": "http", "auth": { "username": "user", "password": "pass" } } }
+      """
+    Then the wait resolves
+    And the proxy carried "HEAD http://127.0.0.1:<port>/" with the authorization "Basic dXNlcjpwYXNz"
+
+  @kind:good
   Scenario: HTTP_PROXY carries the check when proxy is unset
     Given a proxy that records what it carries
     And the environment variable HTTP_PROXY is "<proxy>"

@@ -88,6 +88,12 @@ Then('the proxy carried {string}', function (line) {
   assert.ok(carried(this.proxy).includes(this.fill(line)), `carried: ${carried(this.proxy).join(', ')}`);
 });
 
+Then('the proxy carried {string} with the authorization {string}', function (line, auth) {
+  const seen = [...this.proxy.requests, ...this.proxy.connects].filter((r) => r.line === this.fill(line));
+  assert.ok(seen.length > 0, `carried: ${carried(this.proxy).join(', ')}`);
+  for (const r of seen) assert.strictEqual(r.proxyAuthorization, auth);
+});
+
 Then('the proxy carried nothing', function () {
   assert.deepStrictEqual(carried(this.proxy), []);
 });
