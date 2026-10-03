@@ -22,10 +22,7 @@ Feature: Waiting for resources to go away
   Scenario Outline: an available <kind> times out a reverse wait
     Given <given>
     When I wait in reverse with timeout 600ms, interval 100ms, window 100ms, delay 0ms, tcp timeout 300ms and command timeout 0ms
-    Then the wait fails with:
-      """
-      Timed out waiting for: <resource 1>
-      """
+    Then the wait times out naming resource 1
 
     Examples:
       | kind                    | given                                                 |
