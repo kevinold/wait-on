@@ -214,3 +214,11 @@ through `world.serve`; `closer` in `servers.js`.
   window tick depends on relative stat latency of the first and later polls, so elapsed is
   ~interval or ~2×interval in both engines. Pre-existing 9.x behaviour; a fix would stamp `t`
   at poll start or compare against tick count rather than wall time.
+- 2026-10-03 (L20 run): RED was the undefined step under `--strict`; GREEN on every fixture and
+  engine. 5 local `npm run contract` runs (macOS arm64): js 1620-1637ms, rust-strict
+  1578-1602ms for "-i sets the interval", zero failures. The delay is 1000ms, not the issue's
+  ~300ms (KTD2).
+- Open review residual (cross-model adversarial read): if CLI startup reached 1400-2500ms, the
+  first poll would connect and still land inside the tolerance. A verbose-output assertion
+  could prove the refused-then-connected path, but detail lines differ between engines, so it
+  was not added here. Revisit if CI shows startup above ~1000ms.
