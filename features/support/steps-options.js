@@ -19,11 +19,8 @@ Given('the installed package has no addon for this host', function () {
 
 // starts an http server and registers `http://127.0.0.1:<port>/` as the next resource
 async function serveHttp(world, start) {
-  const server = await start();
-  world.cleanups.push(server.close);
-  world.server = server;
-  world.vars.port = server.port;
-  world.resources.push(`http://127.0.0.1:${server.port}/`);
+  world.server = await world.serve(start);
+  world.addResource(`http://127.0.0.1:${world.server.port}/`, { port: world.server.port });
 }
 
 Given('an HTTP server answering {int} after {int}ms', function (status, ms) {
@@ -53,13 +50,18 @@ Then(/^the server saw at (most|least) (\d+) requests? in flight$/, function (bou
   assert.ok(bound === 'most' ? peak <= Number(n) : peak >= Number(n), `peak ${peak} in flight`);
 });
 
+// the fixture's PEMs become <cert>, <key>, <otherCert>, <encryptedKey> and <passphrase>
 async function serveTls(world, opts) {
-  const server = await servers.tlsServer(opts);
-  world.cleanups.push(server.close);
-  world.server = server;
+  const server = (world.server = await world.serve(() => servers.tlsServer(opts)));
   const { cert, key, otherCert, encryptedKey, passphrase } = server.tls;
-  Object.assign(world.vars, { port: server.port, cert, key, otherCert, encryptedKey, passphrase });
-  world.resources.push(`https://127.0.0.1:${server.port}/`);
+  world.addResource(`https://127.0.0.1:${server.port}/`, {
+    port: server.port,
+    cert,
+    key,
+    otherCert,
+    encryptedKey,
+    passphrase
+  });
 }
 
 Given('an HTTPS server with a self-signed certificate', function () {
@@ -82,14 +84,15 @@ Given('a proxy that records what it carries', async function () {
   Object.assign(this.vars, { proxy: proxy.url, proxyPort: new URL(proxy.url).port });
 });
 
-const carried = (proxy) => [...proxy.requests, ...proxy.connects].map((r) => r.line);
+const records = (proxy) => [...proxy.requests, ...proxy.connects];
+const carried = (proxy) => records(proxy).map((r) => r.line);
 
 Then('the proxy carried {string}', function (line) {
   assert.ok(carried(this.proxy).includes(this.fill(line)), `carried: ${carried(this.proxy).join(', ')}`);
 });
 
 Then('the proxy carried {string} with the authorization {string}', function (line, auth) {
-  const seen = [...this.proxy.requests, ...this.proxy.connects].filter((r) => r.line === this.fill(line));
+  const seen = records(this.proxy).filter((r) => r.line === this.fill(line));
   assert.ok(seen.length > 0, `carried: ${carried(this.proxy).join(', ')}`);
   for (const r of seen) assert.strictEqual(r.proxyAuthorization, auth);
 });
@@ -104,11 +107,11 @@ Then('the proxy carried nothing', function () {
 Given('a command that never exits', function () {
   const script = path.join(this.dir, 'hang.js');
   fs.writeFileSync(script, 'setTimeout(() => {}, 5000);\n');
-  this.resources.push(`command:node ${script}`);
+  this.addResource(`command:node ${script}`);
 });
 
-// log lines carry the runner's pid, which the step cannot know in advance
-// The API runner's lines map resources to <resource N>; CLI output keeps them as typed (steps-cli).
+// Log lines carry the runner's pid, which the step cannot know in advance. The API runner's
+// lines map resources to <resource N>; CLI output keeps them as typed (steps-cli).
 function logLines(world) {
   const lines = world.result ? world.result.lines : world.run.stdout.split(/\r?\n/).filter(Boolean);
   const resources = Boolean(world.result);
@@ -124,13 +127,15 @@ Then('stdout is:', function (text) {
 });
 
 Then('stdout includes the line {string}', function (line) {
-  assert.ok(logLines(this).includes(line), logLines(this).join('\n'));
+  const lines = logLines(this);
+  assert.ok(lines.includes(line), lines.join('\n'));
 });
 
 // verbose detail is not contract (R2): only that it exists beside the log lines
 Then('stdout has lines beyond the log lines', function () {
-  const extra = logLines(this).filter((line) => !/^(wait-on|waiting for \d+ resources: )/.test(line));
-  assert.ok(extra.length > 0, logLines(this).join('\n'));
+  const lines = logLines(this);
+  const extra = lines.filter((line) => !/^(wait-on|waiting for \d+ resources: )/.test(line));
+  assert.ok(extra.length > 0, lines.join('\n'));
 });
 
 // for messages whose tail is Node's own text (a require stack with host paths)

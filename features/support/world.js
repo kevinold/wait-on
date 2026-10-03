@@ -31,6 +31,19 @@ class ContractWorld extends World {
     this.env = {}; // extra env for every child this scenario spawns
   }
 
+  // starts a server the scenario closes afterwards
+  async serve(start) {
+    const server = await start();
+    this.cleanups.push(server.close);
+    return server;
+  }
+
+  // the next `<resource N>`, plus the placeholders it brings (e.g. port)
+  addResource(resource, vars = {}) {
+    Object.assign(this.vars, vars);
+    this.resources.push(resource);
+  }
+
   // `<name>` and `<resource N>` placeholders in scenario text -> actual values;
   // `json` escapes them for a JSON string (Windows paths carry backslashes)
   fill(text, { json = false } = {}) {
