@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "baseBranch": "spike-next-rs",
+  "protectedBranches": ["spike-next-rs"],
+  "subjects": {
+    "preview": { "prefixes": ["feat", "fix", "refactor", "perf", "test", "docs", "build", "chore"], "skipCd": "ignored" },
+    "chore": { "prefixes": ["chore", "docs", "test", "build"], "skipCd": "ignored" }
+  },
+  "checks": { "required": ["build", "rust", "napi"], "previewContext": null },
+  "identity": { "expectedAuthors": ["kevinold"] },
+  "postMergeBar": {
+    "preview": { "mode": "push", "workflow": "node.js.yml", "runs": 1 },
+    "chore": { "mode": "push", "workflow": "node.js.yml", "runs": 1 },
+    "maxRuns": 3,
+    "timeoutMinutes": 90
+  },
+  "workerEnvFiles": [],
+  "protectedPaths": [".releaserc.json"],
+  "workerKind": "claude"
+}

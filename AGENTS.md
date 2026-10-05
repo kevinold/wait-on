@@ -19,11 +19,25 @@ Two front doors to the same behavior — **keep them in sync**:
   the schema entry *and*, when exposed on the CLI, a flag in `bin/wait-on`, an entry in
   `bin/usage.txt`, and a `README.md` update.
 
+## Two engines
+
+This branch (`spike-next-rs`) is building a Rust engine next to the Node one. The pure-JS
+engine stays the default; the Rust engine is opt-in via `WAIT_ON_ENGINE=rust`
+(selected and loaded in `lib/engine.js`; Rust code in `crates/`), and both must pass the
+same mocha suites under each engine (no pending list). Spine lanes never edit `.github/workflows/`; they change
+CI behavior through the `ci:rs`, `build:napi`, and `ci:rs:package` npm scripts. The
+Rust-side tooling behind those scripts is `cargo xtask` (crate `xtask/`). The
+developer manual is [`docs/guides/README.md`](docs/guides/README.md).
+
 ## Architecture
 
-An rxjs polling pipeline in `lib/wait-on.js`:
+`lib/wait-on.js` is the front door: `waitOn` → `waitOnImpl` validates, resolves the
+engine (`lib/engine.js`), then lazily requires either the JS engine (`lib/engine-js.js`,
+the rxjs pipeline below) or the Rust shim (`lib/engine-rust.js`, one `addon.wait` call
+running the loop in `crates/wait-on-core/src/waiter.rs`). Shared pure helpers
+(`PREFIX_RE`, resource parsing, proxy/header preparation) live in `lib/resources.js`.
 
-- `waitOn` → `waitOnImpl`: validate `opts` against the joi `WAIT_ON_SCHEMA`, fail fast on
+- JS engine: validate `opts` against the joi `WAIT_ON_SCHEMA`, fail fast on
   malformed resources (`validateResources`), build one observable per resource with
   `createResource$`, then `combineLatest` them and `merge` in a `timer(timeout)` error
   observable. The stream runs `takeWhile(states => states.some(x => !x))` until every
@@ -44,34 +58,44 @@ An rxjs polling pipeline in `lib/wait-on.js`:
 - **Validation**: `WAIT_ON_SCHEMA` (joi) defines every option and its default;
   `validateResource` rejects syntactically bad http/tcp resources up front with a clear
   error instead of polling until timeout.
-- **HTTP**: requests go through axios with the http adapter forced
-  (`axios.create({ adapter: 'http' })`), which avoids xhr/jsdom log pollution.
+- **HTTP**: the JS engine probes with undici's `dispatcher.request` (not `fetch`, which
+  refuses Fetch bad-list ports such as 6000, #104) on a per-request undici dispatcher
+  (`Agent`, `ProxyAgent`, `EnvHttpProxyAgent`) that carries TLS options and proxy settings,
+  composed with `interceptors.redirect` when `followRedirect` is true.
 
-**Add a new resource type:** extend `PREFIX_RE`, add a `case` in the `createResource$`
-switch, write a `create<Type>$` factory following the existing
+**Add a new resource type:** extend `PREFIX_RE` (`lib/resources.js`), add a `case` in the
+`createResource$` switch (`lib/engine-js.js`) and the `KINDS` map in `lib/engine-rust.js`,
+a matching `Kind` in `crates/wait-on-core/src/waiter.rs` (napi `kind` in
+`crates/wait-on-napi/src/wait.rs`), write a `create<Type>$` factory following the existing
 `timer → mergeMap → startWith(false) → distinctUntilChanged → take(2)` shape (honor
 `reverse` via `negateAsync`), and add a `case` in `validateResource` when the resource
 has syntax worth failing fast on.
 
 ## Stack
 
-- Node `>=20`, plain CommonJS (`"type": "commonjs"`, `'use strict'`), no build step.
-- Runtime deps (current on master): `axios` (http), `rxjs` (polling/merge), `joi`
-  (`WAIT_ON_SCHEMA`), `lodash` (via `lodash/fp`).
+- Node `>=22.19.0`, plain CommonJS (`"type": "commonjs"`, `'use strict'`), no build step.
+- Runtime deps: `undici` (http), `rxjs` (polling/merge), `joi` (`WAIT_ON_SCHEMA`).
 - CLI args are parsed with Node's built-in `util.parseArgs` (minimist was removed, #233).
-- **Upcoming:** jeffbski/wait-on#238 raises the engines floor to `>=22.19` and #238/#239
-  propose dropping `axios`/`lodash`. Describe the current state above; do not assume those
-  have merged.
 
 ## Commands
 
-- `npm test` — the full check: `npm run lint && npm run test:mocha`.
-- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `bin/wait-on`
+- `npm test` — the full check: `npm run lint && npm run test:types && npm run test:mocha`.
+- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `benchmarks/**/*.js`,
+  `xtask/**/*.js`, `features/**/*.js`, `cucumber.js`, `bin/wait-on`
   (flat config `eslint.config.mjs`).
 - `npm run test:mocha` — `mocha --exit "test/**/*.mocha.js"` (`--exit` is required: spun-up
   test servers leave open handles).
 - `npm run test:coverage` — nyc + mocha.
-- Node engines floor is `>=20.0.0` on master.
+- `npm run contract` — the library-consumer contract: `features/*.feature` run by cucumber-js
+  against the packed, installed package in CJS, ESM and TypeScript fixture projects under
+  `js` and `rust-strict` (`cargo xtask contract`; `ci:rs` runs it). The `@engine` scenarios
+  also run in Rust (`cargo test -p wait-on-features --test features`, cucumber-rs). See
+  [`docs/guides/testing.md`](docs/guides/testing.md#consumer-contract).
+- `npm run dependents` — on demand: published dependents' own suites (start-server-and-test)
+  on the published wait-on, then on the packed package under `js` and `rust-strict`
+  (`cargo xtask dependents`). See
+  [`docs/guides/testing.md`](docs/guides/testing.md#dependents-harness).
+- Node engines floor is `>=22.19.0`.
 
 ## Conventions
 
@@ -79,15 +103,51 @@ has syntax worth failing fast on.
 - Tests: mocha + chai, files `test/*.mocha.js` (`api.mocha.js`, `cli.mocha.js`,
   `validation.mocha.js`); shared fixtures `test/config-http-resources.js` and
   `test/config-headers.js`. How to write them: see
-  [Test-Driven Development](#test-driven-development-mandatory).
-- CI runs on **ubuntu + windows** (matrix node 20/22/24, `npm ci --engine-strict`). No
+  [Test-Driven Development](#test-driven-development-mandatory). Engine behaviour gets a Rust
+  test first (`crates/wait-on-core`); JS tests only at the API/CLI front doors (inventory:
+  [`docs/guides/testing.md`](docs/guides/testing.md#js-vs-rust-inventory)). A change to what
+  library or CLI consumers see also adds or updates a scenario in `features/*.feature`, the
+  consumer contract.
+- CI runs on **ubuntu + windows** (matrix node 22/24/26, `npm ci --engine-strict`). No
   POSIX-only assumptions: mind Windows named pipes and path separators, and don't rely on
   unix-only tooling (e.g. `openssl speed`) or shell.
-- Conventional Commit messages (semantic-release + commitlint are proposed in #241).
+- Conventional Commit messages, checked locally by a hook and in CI by commitlint: see
+  [Commit messages](#commit-messages).
 - Keep `README.md` (and `bin/usage.txt`) in sync whenever options or CLI flags change.
 - `.npmignore` hygiene: exclude new top-level dev/tooling files from the published package.
 - CLI headers: `-H` / `--header "Name: value"` is repeatable and merges with config-file
   headers, CLI winning on conflict (#234).
+
+## Commit messages
+
+CI runs commitlint (`@commitlint/config-conventional`, `commitlint.config.js`) on every PR
+commit, and a failure blocks the PR. The tracked `.githooks/commit-msg` (POSIX sh, no
+dependencies) applies the same rules at commit time. Enable it once per clone with
+`cargo xtask hooks`, or with `git config core.hooksPath .githooks`. Never commit with `--no-verify`.
+
+- Header: `type(scope): subject`, optional `!` before the colon, at most 100 characters.
+- Type: one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`,
+  `chore`, `revert`, in lowercase.
+- Subject: not empty. Start it lowercase, and never with a lane ID, an issue number, or a proper
+  noun. Move that word into the scope or rephrase. No trailing period.
+- Leave a blank line after the header. Every body and footer line is at most 100 characters.
+  Long logs, errors, and URLs go in the PR body, not the commit.
+- Merging the spike branch into a parallel lane uses
+  `git merge -m "chore(merge): merge spike-next-rs into <branch>"`.
+- Git's own merge, revert, reapply, and `fixup!`/`squash!`/`amend!` headers are accepted as-is.
+
+| Rejected | Rule | Accepted |
+|---|---|---|
+| `docs(plans): L12 xtask + Justfile lane plan` | `subject-case` | `docs(plans): add L12 xtask lane plan` |
+| `feat(rust): Rust tcp check` | `subject-case` | `feat(rust): add tcp check` |
+| `feat(rust): verified TLS roots, client identity, explicit proxy and unix/pipe transport in the http checker (#57)` | `header-max-length` (113) | `feat(rust): add tls, proxy and unix transport to the http checker` |
+| a body line pasting a 140-character cargo error | `body-max-line-length` | a one-line summary, with the log in the PR body |
+
+Check a message before committing:
+`echo "$MSG" | npx -y -p @commitlint/cli@21.2.3 -p @commitlint/config-conventional@21.2.3 commitlint`.
+Lint a range the way CI does by adding `--from origin/spike-next-rs --to HEAD`. The hook is
+slightly stricter than CI. For example, it rejects any subject that starts with a non-ASCII
+character. It never accepts a message that CI rejects.
 
 ## Test-Driven Development (Mandatory)
 

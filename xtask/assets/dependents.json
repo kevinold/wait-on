@@ -1,0 +1,44 @@
+[
+  {
+    "name": "start-server-and-test",
+    "repo": "https://github.com/bahmutov/start-server-and-test.git",
+    "tag": "v3.0.12",
+    "subdir": ".",
+    "swap": "install",
+    "scripts": false,
+    "os": [],
+    "optional": false,
+    "build": [],
+    "run": [
+      "node node_modules/mocha/bin/mocha.js test/helper src/*-spec.js",
+      "npm run demo",
+      "npm run demo2",
+      "npm run demo3",
+      "npm run demo5",
+      "npm run demo6",
+      "npm run demo7",
+      "npm run demo9",
+      "npm run demo11",
+      "npm run demo12",
+      "npm run demo-multiple",
+      "npm run demo-expect-403",
+      "npm run demo-json-server",
+      "npm run demo-ip6",
+      "npm run demo-timeout",
+      "npm run demo-interval",
+      "npm run demo-commands"
+    ]
+  },
+  {
+    "name": "jest-dev-server",
+    "repo": "https://github.com/argos-ci/jest-puppeteer.git",
+    "tag": "v11.0.0",
+    "subdir": "packages/jest-dev-server",
+    "swap": "overrides",
+    "scripts": true,
+    "os": ["linux"],
+    "optional": true,
+    "build": ["npm run build"],
+    "run": ["node node_modules/jest/bin/jest.js --runInBand packages/jest-dev-server"]
+  }
+]

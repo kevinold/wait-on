@@ -6,11 +6,10 @@
 // paths (bin/wait-on). Time-dependent cases reuse the LT1 frozen clock (itFrozen); the
 // CLI cases spawn `node bin/wait-on` so nyc instruments the subprocess.
 //
-// Deliberately NOT covered (documented in the LT2 plan): lib/wait-on.js:180 (the
-// non-timeout error log) is unreachable via the public API — every inner resource
-// observable catches its own errors, so the only error the merged stream emits is the
-// timeout, whose message always starts with TIMEOUT_ERR_MSG (line 178). Covering it would
-// need a lib change, which is out of scope for this test-only lane.
+// The LT2 plan left the non-timeout `exiting with error` log in cleanup (now
+// lib/wait-on.js:152) uncovered as unreachable; a dispatcher/http checker construction
+// error now reaches it through the stream, and in L7 U5 the Rust engine's non-timeout
+// error result reaches it too.
 
 const childProcess = require('child_process');
 const path = require('path');

@@ -1,0 +1,15 @@
+{
+  "threshold": {
+    "relative": 0.25,
+    "floorMs": 50
+  },
+  "runs": 20,
+  "recorded": {
+    "darwin-arm64": {
+      "jsMs": 99.5,
+      "rustMs": 102.2,
+      "overheadMs": 2.7,
+      "date": "2026-09-30"
+    }
+  }
+}

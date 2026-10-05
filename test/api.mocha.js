@@ -8,6 +8,7 @@ const path = require('path');
 const temp = require('temp');
 const mkdirp = require('mkdirp');
 const { itFrozen } = require('./frozen-clock');
+const { listening } = require('./helpers/cli-conformance');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -227,6 +228,34 @@ describe('api', function () {
     waitOn(opts, function (err) {
       expect(err).to.not.be.ok;
       done();
+    });
+  });
+
+  // Engine parity cells (#54): run under JS in npm test and against the Rust addon in ci:rs.
+  async function listenOn(host) {
+    httpServer = await listening(http.createServer(), 0, host);
+    return httpServer.address().port;
+  }
+
+  it('should succeed when a service is listening on a bare tcp port', async function () {
+    const port = await listenOn('localhost');
+    await waitOn({ resources: [`tcp:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed for localhost against an IPv4-only listener', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:localhost:${port}`], timeout: 2000 });
+  });
+
+  it('should succeed with tcpTimeout 0 against a listening port', async function () {
+    const port = await listenOn('127.0.0.1');
+    await waitOn({ resources: [`tcp:127.0.0.1:${port}`], tcpTimeout: 0, timeout: 2000 });
+  });
+
+  it('should succeed in reverse mode when nothing listens on the socket path', function (done) {
+    temp.mkdir({}, function (err, dirPath) {
+      if (err) return done(err);
+      waitOn({ resources: ['socket:' + socketPathIn(dirPath)], reverse: true, timeout: 2000 }, done);
     });
   });
 
@@ -1033,6 +1062,272 @@ describe('api', function () {
     });
   });
 
+  // L4 input-matrix cells. Real clock: under the Rust engine the check settles on another
+  // thread, which a virtual clock cannot wait for. Under WAIT_ON_ENGINE=rust* each test
+  // loads the counting addon (delegating to the real prebuild) and asserts the Rust check ran.
+  const COUNTING_ADDON = path.join(__dirname, 'fixtures', 'counting-addon.js');
+  const counting = require('./fixtures/counting-addon');
+  const isRust = /^rust(-strict)?$/.test(process.env.WAIT_ON_ENGINE || '');
+
+  function listen(handler) {
+    httpServer = http.createServer(handler);
+    return new Promise((resolve) => httpServer.listen(0, 'localhost', () => resolve(httpServer.address().port)));
+  }
+
+  // Runs fn; under rust*, through the counting addon, proving exactly one wait ran in Rust.
+  async function counted(fn) {
+    const saved = process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
+    if (isRust) process.env.WAIT_ON_NATIVE_LIBRARY_PATH = COUNTING_ADDON;
+    counting.reset();
+    try {
+      return await fn();
+    } finally {
+      if (saved === undefined) delete process.env.WAIT_ON_NATIVE_LIBRARY_PATH;
+      else process.env.WAIT_ON_NATIVE_LIBRARY_PATH = saved;
+      if (isRust) expect(counting.calls.filter((c) => c.type === 'wait')).to.have.length(1);
+    }
+  }
+
+  // 'resolved' or the rejection message, counted.
+  function outcome(opts) {
+    return counted(() => waitOn(opts).then(() => 'resolved', (e) => e.message));
+  }
+
+  describe('http checks on either engine', function () {
+    const SHORT = { timeout: 600, interval: 100 };
+
+    for (const [prefix, method] of [['http', 'HEAD'], ['http-get', 'GET']]) {
+      it(`should timeout without following the redirect when followRedirect is false (${method})`, async function () {
+        const seen = [];
+        const port = await listen((req, res) => {
+          seen.push(req.url);
+          if (req.url === '/') res.writeHead(302, { Location: '/foo' });
+          res.end('data');
+        });
+        const r = await outcome({ resources: [`${prefix}://localhost:${port}/`], followRedirect: false, ...SHORT });
+        expect(r).to.match(/Timed out/);
+        expect(seen).to.include('/');
+        expect(seen).to.not.include('/foo');
+      });
+
+      it(`should send API headers as strings when headers include a number (${method})`, async function () {
+        let seen;
+        const port = await listen((req, res) => {
+          seen = req.headers;
+          res.end('ok');
+        });
+        const headers = { 'X-Custom': 'keep', 'X-Num': 42 };
+        expect(await outcome({ resources: [`${prefix}://localhost:${port}/`], headers, ...SHORT })).to.equal('resolved');
+        expect(seen['x-custom']).to.equal('keep');
+        expect(seen['x-num']).to.equal('42');
+      });
+
+      it(`should timeout without crashing when validateStatus throws on a 200 (${method})`, async function () {
+        const port = await listen((req, res) => res.end('ok'));
+        const validateStatus = () => {
+          throw new Error('boom');
+        };
+        const r = await outcome({ resources: [`${prefix}://localhost:${port}/`], validateStatus, ...SHORT });
+        expect(r).to.match(/Timed out/);
+      });
+    }
+
+    it('should timeout when a GET body stalls past httpTimeout', async function () {
+      const port = await listen((req, res) => {
+        res.writeHead(200, { 'Content-Length': '10' });
+        res.write('x'); // headers and one byte, then the body stalls
+      });
+      const r = await outcome({ resources: [`http-get://localhost:${port}/`], httpTimeout: 70, ...SHORT });
+      expect(r).to.match(/Timed out/);
+    });
+
+    it('should send a Basic Authorization header when auth is set on a GET', async function () {
+      let seen;
+      const port = await listen((req, res) => {
+        seen = req.headers.authorization;
+        res.end('ok');
+      });
+      const auth = { username: 'user', password: 'p@ss' };
+      expect(await outcome({ resources: [`http-get://localhost:${port}/`], auth, ...SHORT })).to.equal('resolved');
+      expect(seen).to.equal('Basic ' + Buffer.from('user:p@ss').toString('base64'));
+    });
+
+    it('should succeed when validateStatus returns a truthy non-boolean', async function () {
+      const port = await listen((req, res) => res.end('ok'));
+      const r = await outcome({ resources: [`http://localhost:${port}/`], validateStatus: () => 1, ...SHORT });
+      expect(r).to.equal('resolved');
+    });
+
+    it('should succeed on 200 and timeout on 204 when validateStatus accepts only 200 (GET)', async function () {
+      let code = 200;
+      const port = await listen((req, res) => {
+        res.statusCode = code;
+        res.end();
+      });
+      const opts = { resources: [`http-get://localhost:${port}/health`], validateStatus: (s) => s === 200, ...SHORT };
+      expect(await outcome(opts)).to.equal('resolved');
+      code = 204;
+      expect(await outcome(opts)).to.match(/Timed out/);
+    });
+
+    for (const simultaneous of [1, 3]) {
+      it(`should succeed and consult validateStatus per resource when simultaneous is ${simultaneous}`, async function () {
+        const port = await listen((req, res) => res.end('ok'));
+        let calls = 0;
+        const validateStatus = (s) => {
+          calls++;
+          return s === 200;
+        };
+        const resources = ['/a', '/b', '/c'].map((p) => `http://localhost:${port}${p}`);
+        expect(await outcome({ resources, validateStatus, simultaneous, ...SHORT })).to.equal('resolved');
+        expect(calls).to.be.at.least(3);
+      });
+    }
+  });
+
+  // L7 U6: one front-door test per loop behavior. Real clock: under rust* the whole wait
+  // runs in Rust (counted: exactly one wait call), which a virtual clock cannot drive.
+  describe('polling loop on either engine', function () {
+    this.timeout(6000);
+    const elapsedSince = (start) => performance.now() - start;
+    const tempFile = (content) => {
+      const file = path.join(temp.mkdirSync('wait-on-loop'), 'f');
+      if (content !== undefined) fs.writeFileSync(file, content);
+      return file;
+    };
+
+    async function captureLog(fn) {
+      const lines = [];
+      const original = console.log;
+      console.log = (...args) => lines.push(require('util').format(...args));
+      try {
+        await fn();
+      } finally {
+        console.log = original;
+      }
+      return lines;
+    }
+
+    it('should succeed with a ready file and http server and call back exactly once with no error', async function () {
+      const port = await listen((req, res) => res.end('ok'));
+      const resources = [tempFile('x'), `http://localhost:${port}/`];
+      const opts = { resources, timeout: 2000, interval: 50 };
+      expect(await outcome(opts)).to.equal('resolved');
+      const calls = await counted(
+        () =>
+          new Promise((resolve) => {
+            const seen = [];
+            waitOn(opts, (...args) => {
+              seen.push(args);
+              setTimeout(() => resolve(seen), 200); // any second call lands in this window
+            });
+          })
+      );
+      expect(calls).to.have.length(1);
+      expect(calls[0]).to.have.length(1);
+      expect(calls[0][0]).to.equal(undefined);
+    });
+
+    it('should name every resource in the timeout message when timeout is 0', async function () {
+      const resources = [tempFile(), tempFile()];
+      expect(await outcome({ resources, timeout: 0 })).to.equal(`Timed out waiting for: ${resources.join(', ')}`);
+    });
+
+    it('should time out within 1s when timeout overflows a Node timer (3e9)', async function () {
+      const file = tempFile();
+      const start = performance.now();
+      expect(await outcome({ resources: [file], timeout: 3e9 })).to.equal(`Timed out waiting for: ${file}`);
+      expect(elapsedSince(start)).to.be.below(1000);
+    });
+
+    it('should time out at the deadline, not sooner, when timeout falls before the first check', async function () {
+      const file = tempFile('x');
+      const start = performance.now();
+      expect(await outcome({ resources: [file], delay: 3000, timeout: 600 })).to.equal(`Timed out waiting for: ${file}`);
+      expect(elapsedSince(start)).to.be.within(550, 2500);
+    });
+
+    it('should succeed on a ready file when simultaneous exceeds u32 (5e9)', async function () {
+      expect(await outcome({ resources: [tempFile('x')], simultaneous: 5e9, interval: 50, timeout: 2000 })).to.equal('resolved');
+    });
+
+    it('should not succeed before delay elapses on a ready file', async function () {
+      const start = performance.now();
+      expect(await outcome({ resources: [tempFile('x')], delay: 300, interval: 50, timeout: 3000 })).to.equal('resolved');
+      expect(elapsedSince(start)).to.be.at.least(300);
+    });
+
+    it('should succeed on a ready file when interval is 0', async function () {
+      expect(await outcome({ resources: [tempFile('x')], interval: 0, timeout: 2000 })).to.equal('resolved');
+    });
+
+    for (const simultaneous of [1, 3]) {
+      it(`should keep at most ${simultaneous} requests in flight when simultaneous is ${simultaneous}`, async function () {
+        let inFlight = 0;
+        let peak = 0;
+        const port = await listen((req, res) => {
+          peak = Math.max(peak, ++inFlight);
+          setTimeout(() => {
+            inFlight--;
+            res.end('ok');
+          }, 150);
+        });
+        const opts = { resources: [`http://localhost:${port}/`], simultaneous, interval: 30, timeout: 3000 };
+        expect(await outcome(opts)).to.equal('resolved');
+        expect(peak).to.be.within(1, simultaneous);
+      });
+    }
+
+    it('should run one command attempt at a time while ticks keep firing', async function () {
+      const file = tempFile();
+      const script = "require('fs').appendFileSync(process.argv[1], 'x'); setTimeout(() => {}, 2000)";
+      const opts = { resources: [`command:node -e "${script}" ${file}`], interval: 100, timeout: 800 };
+      expect(await outcome(opts)).to.equal(`Timed out waiting for: ${opts.resources[0]}`);
+      expect(fs.readFileSync(file, 'utf8')).to.equal('x');
+    });
+
+    it('should succeed in reverse mode once the file is removed', async function () {
+      const file = tempFile('x');
+      setTimeout(() => fs.unlinkSync(file), 300);
+      const start = performance.now();
+      expect(await outcome({ resources: [file], reverse: true, interval: 50, timeout: 3000 })).to.equal('resolved');
+      expect(elapsedSince(start)).to.be.at.least(300);
+    });
+
+    it('should succeed only once a growing file is stable for window', async function () {
+      const file = tempFile('x');
+      let appends = 0;
+      const grow = setInterval(() => {
+        fs.appendFileSync(file, 'x');
+        if (++appends === 4) clearInterval(grow);
+      }, 100);
+      const start = performance.now();
+      try {
+        expect(await outcome({ resources: [file], window: 300, interval: 100, timeout: 4000 })).to.equal('resolved');
+      } finally {
+        clearInterval(grow);
+      }
+      expect(appends).to.equal(4);
+      expect(elapsedSince(start)).to.be.at.least(700);
+    });
+
+    it('should log the waiting and complete lines for a ready file', async function () {
+      const file = tempFile('x');
+      const lines = await captureLog(() => outcome({ resources: [file], log: true, interval: 50, timeout: 2000 }));
+      expect(lines).to.deep.equal([`waiting for 1 resources: ${file}`, `wait-on(${process.pid}) complete`]);
+    });
+
+    it('should log the reverse banner, waiting and complete lines for a missing file in reverse mode', async function () {
+      const file = tempFile();
+      const lines = await captureLog(() => outcome({ resources: [file], reverse: true, log: true, interval: 50, timeout: 2000 }));
+      expect(lines).to.deep.equal([
+        'wait-on reverse mode - waiting for resources to be unavailable',
+        `waiting for 1 resources: ${file}`,
+        `wait-on(${process.pid}) complete`
+      ]);
+    });
+  });
+
   describe('resource validation (#217, #140, #141)', function () {
     it('should reject a malformed http-get resource promptly, not poll to timeout (#217)', function (done) {
       // http-get:localhost:3000/x -> http:localhost:3000/x (no //): would poll forever before
@@ -1182,6 +1477,22 @@ describe('api', function () {
         }, 600);
         waitOn(
           { resources: [`command:node ${runner} ${marker}`], commandTimeout: 200, timeout: 4000, interval: 100 },
+          function (err) {
+            expect(err).to.not.be.ok;
+            done();
+          }
+        );
+      });
+    });
+
+    it('in reverse mode, treats a command killed by commandTimeout as failing', function (done) {
+      temp.mkdir({}, function (err, dirPath) {
+        if (err) return done(err);
+        const runner = path.resolve(dirPath, 'hang.js');
+        // Hangs forever, so reverse can only resolve once commandTimeout kills an attempt.
+        fs.writeFileSync(runner, 'setInterval(function () {}, 1000);\n');
+        waitOn(
+          { resources: [`command:node ${runner}`], reverse: true, commandTimeout: 200, timeout: 4000, interval: 100 },
           function (err) {
             expect(err).to.not.be.ok;
             done();
