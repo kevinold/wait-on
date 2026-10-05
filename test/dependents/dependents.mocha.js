@@ -1,5 +1,6 @@
 'use strict';
 
+const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -115,7 +116,7 @@ describe('dependents: select', function () {
 describe('dependents: list', function () {
   it('should print each entry with its tag, OS, optional flag and indented commands', function () {
     const text = dependents.listText(dependents.parseManifest(manifestText()));
-    ['start-server-and-test', 'v3.0.12', 'jest-dev-server', 'v11.0.0', 'optional'].forEach((s) =>
+    ['start-server-and-test', 'v3.0.12', 'jest-dev-server', 'v11.0.0', 'optional=yes'].forEach((s) =>
       expect(text).to.include(s)
     );
     const lines = text.split('\n');
@@ -326,7 +327,7 @@ describe('dependents: verdict', function () {
 const ROOT = path.join(__dirname, '..', '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'dependents.js');
 const spawn = (args, env) =>
-  require('child_process').spawnSync(process.execPath, args, { cwd: ROOT, env: env || process.env, encoding: 'utf8' });
+  childProcess.spawnSync(process.execPath, args, { cwd: ROOT, env: env || process.env, encoding: 'utf8' });
 const npmRun = (args, env) => spawn([process.env.npm_execpath].concat(args), env);
 function needsNpm() {
   if (!process.env.npm_execpath) this.skip(); // mocha not launched through npm

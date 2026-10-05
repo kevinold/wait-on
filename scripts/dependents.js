@@ -1,7 +1,8 @@
 'use strict';
 
 // npm run dependents: run published dependents' own commands against a packed wait-on
-// tarball. Manifest: test/dependents/dependents.json. See docs/plans/*-dependents-check-plan.md.
+// tarball. Manifest: test/dependents/dependents.json. Plan:
+// docs/plans/2026-10-05-1020-feat-dependents-check-plan.md.
 
 const childProcess = require('child_process');
 const fs = require('fs');
@@ -17,8 +18,8 @@ const FIELDS = {
   tag: 'string',
   swap: 'string',
   scripts: 'boolean',
-  build: 'commands',
-  run: 'commands',
+  build: 'strings',
+  run: 'strings',
   os: 'strings',
   optional: 'boolean'
 };
@@ -35,8 +36,9 @@ function checkEntry(e) {
   };
   Object.entries(FIELDS).forEach(([field, type]) => {
     const v = e[field];
-    const ok = type === 'commands' || type === 'strings' ? isStrings(v) : typeof v === type;
-    if (!ok) fail(`needs ${field} (${type === 'commands' || type === 'strings' ? 'array of strings' : type})`);
+    if (type === 'strings' ? !isStrings(v) : typeof v !== type) {
+      fail(`needs ${field} (${type === 'strings' ? 'array of strings' : type})`);
+    }
   });
   if (!SWAPS.includes(e.swap)) fail(`has swap ${e.swap}, expected one of ${SWAPS.join(', ')}`);
   if (e.run.length === 0) fail('needs at least one run command');
@@ -173,16 +175,15 @@ function verdict(label, rows) {
   const width = Math.max(7, ...rows.map((r) => r.command.length));
   const line = (cells) => '  ' + cells.map((c, i) => (i === 0 ? c.padEnd(width) : c.padEnd(9))).join(' ').trimEnd();
   const header = ['command', 'baseline', 'tarball'].concat(withControl ? ['9.5.1'] : [], ['verdict']);
-  let code = 0;
+  const call = (r) => {
+    if (r.tarball) return 'ok';
+    return r.baseline ? 'regression' : 'pre-existing';
+  };
+  const code = rows.some((r) => call(r) === 'regression') ? 1 : 0;
   const body = rows.map((r) => {
-    let call = 'ok';
-    if (!r.tarball) {
-      call = r.baseline ? 'regression' : 'pre-existing';
-      if (r.baseline) code = 1;
-    }
     const cells = [r.command, mark(r.baseline), mark(r.tarball)];
     if (withControl) cells.push(r.control === undefined ? '-' : mark(r.control));
-    return line(cells.concat(call));
+    return line(cells.concat(call(r)));
   });
   return { text: [label, line(header)].concat(body).join('\n') + '\n', code };
 }
@@ -201,8 +202,6 @@ const CONTROL_VERSION = '9.5.1';
 const ROOT = path.join(__dirname, '..');
 const MANIFEST = path.join(ROOT, 'test', 'dependents', 'dependents.json');
 
-
-// child processes never go through a shell: npm runs as `node npm-cli.js ...`
 function exec(file, args, cwd, env, capture) {
   const r = childProcess.spawnSync(file, args, {
     cwd,
@@ -224,11 +223,12 @@ function packTarball(npm, dir) {
 function runEntry(entry, ctx) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `dependents-${entry.name}-`));
   const clone = path.join(dir, 'repo');
-  const npm = (args, what) => {
-    if (exec(process.execPath, [ctx.npm, ...args], clone, process.env).status !== 0) {
+  const must = (file, args, cwd, what) => {
+    if (exec(file, args, cwd, process.env).status !== 0) {
       throw new Error(`${entry.name}: ${what} failed (kept ${dir})`);
     }
   };
+  const npm = (args, what) => must(process.execPath, [ctx.npm, ...args], clone, what);
   const runAll = (label) => {
     const env = runEnv(process.env);
     return entry.run.map((cmd) => {
@@ -247,15 +247,9 @@ function runEntry(entry, ctx) {
   };
 
   console.log(`> ${entry.name}: clone ${entry.repo} ${entry.tag} into ${clone}`);
-  if (exec('git', cloneArgs(entry, clone), dir, process.env).status !== 0) {
-    throw new Error(`${entry.name}: git clone failed (kept ${dir})`);
-  }
+  must('git', cloneArgs(entry, clone), dir, 'git clone');
   npm(installArgs(entry), 'npm ci');
-  entry.build.forEach((cmd) => {
-    if (exec(process.execPath, nodeArgs(cmd, ctx.npm), clone, process.env).status !== 0) {
-      throw new Error(`${entry.name}: ${cmd} failed (kept ${dir})`);
-    }
-  });
+  entry.build.forEach((cmd) => must(process.execPath, nodeArgs(cmd, ctx.npm), clone, cmd));
 
   const baseline = runAll('baseline');
   swapAndProve({ tgz: ctx.tgz }, ctx.version);
@@ -284,17 +278,16 @@ function main(argv) {
   const picked = select(entries, opts, process.platform);
   const npm = process.env.npm_execpath;
   if (!npm) throw new Error('npm_execpath is not set: run this through npm run dependents');
-  let tgz;
-  if (opts.tgz) {
-    tgz = path.resolve(opts.tgz);
-  } else {
-    const packDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dependents-pack-'));
-    tgz = packTarball(npm, packDir);
+  const packDir = opts.tgz ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), 'dependents-pack-'));
+  try {
+    const tgz = packDir ? packTarball(npm, packDir) : path.resolve(opts.tgz);
+    const ctx = { npm, tgz, version: tgzVersion(tgz), control: opts.control, keep: opts.keep };
+    console.log(`> dependents: ${picked.map((e) => e.name).join(', ')} against ${tgz}`);
+    // one entry at a time: the dependents bind fixed ports
+    return picked.reduce((code, entry) => Math.max(code, runEntry(entry, ctx)), 0);
+  } finally {
+    if (packDir) removeDir(packDir);
   }
-  const ctx = { npm, tgz, version: tgzVersion(tgz), control: opts.control, keep: opts.keep };
-  console.log(`> dependents: ${picked.map((e) => e.name).join(', ')} against ${tgz}`);
-  // one entry at a time: the dependents bind fixed ports
-  return picked.reduce((code, entry) => Math.max(code, runEntry(entry, ctx)), 0);
 }
 
 if (require.main === module) {
