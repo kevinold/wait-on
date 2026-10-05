@@ -58,9 +58,10 @@ running the loop in `crates/wait-on-core/src/waiter.rs`). Shared pure helpers
 - **Validation**: `WAIT_ON_SCHEMA` (joi) defines every option and its default;
   `validateResource` rejects syntactically bad http/tcp resources up front with a clear
   error instead of polling until timeout.
-- **HTTP**: requests go through undici's own `fetch` (not Node's global fetch) with a
-  per-request undici dispatcher (`Agent`, `ProxyAgent`, `EnvHttpProxyAgent`) that carries
-  TLS options and proxy settings.
+- **HTTP**: the JS engine probes with undici's `dispatcher.request` (not `fetch`, which
+  refuses Fetch bad-list ports such as 6000, #104) on a per-request undici dispatcher
+  (`Agent`, `ProxyAgent`, `EnvHttpProxyAgent`) that carries TLS options and proxy settings,
+  composed with `interceptors.redirect` when `followRedirect` is true.
 
 **Add a new resource type:** extend `PREFIX_RE` (`lib/resources.js`), add a `case` in the
 `createResource$` switch (`lib/engine-js.js`) and the `KINDS` map in `lib/engine-rust.js`,

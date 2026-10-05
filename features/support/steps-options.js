@@ -32,6 +32,10 @@ Given('an HTTP server answering {int} after {int}ms', function (status, ms) {
   return serveHttp(this, () => servers.slowHttpServer(status, ms));
 });
 
+Given('an HTTP server on a Fetch bad-list port answering {int}', function (status) {
+  return serveHttp(this, () => servers.badPortHttpServer(status));
+});
+
 Given('an HTTP server answering {int} that records requests', function (status) {
   return serveHttp(this, () => servers.recordingHttpServer(status));
 });

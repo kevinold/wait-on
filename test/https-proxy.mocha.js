@@ -559,6 +559,135 @@ describe('plain http auth, headers and validateStatus parity', function () {
   });
 });
 
+// #104 (upstream #260): undici fetch refuses WHATWG Fetch "bad ports" (6000, 5060,
+// 6665-6669, 10080, ...) before connecting; axios (9.x) and reqwest do not. Both engines
+// must reach them.
+describe('Fetch bad-list ports (#104)', function () {
+  this.timeout(6000);
+  const BAD_PORT = 6000;
+  let fx;
+  let proxy;
+
+  before(function () {
+    this.timeout(30000);
+    fx = tlsFixture();
+  });
+  after(function () {
+    if (fx) fx.cleanup();
+  });
+  afterEach(async function () {
+    if (proxy) await proxy.close();
+    proxy = null;
+    await new Promise((resolve) => closeServers(resolve));
+  });
+
+  // Listen on the bad-list port; skip (not fail) when another process holds it.
+  async function listenBadPort(ctx, server, host = '127.0.0.1') {
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(BAD_PORT, host, resolve);
+      });
+    } catch (err) {
+      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') ctx.skip();
+      throw err;
+    }
+    servers.push(server);
+    return server;
+  }
+  const countingTarget = (handler = (req, res) => res.end('ok')) => {
+    const server = http.createServer((req, res) => { server.hits++; handler(req, res); });
+    server.hits = 0;
+    return server;
+  };
+  const badUrl = `http://127.0.0.1:${BAD_PORT}/`;
+
+  it('should succeed when an http HEAD resource listens on a bad-list port', async function () {
+    const target = await listenBadPort(this, countingTarget());
+    expect(await outcome({ resources: [badUrl] })).to.equal('resolved');
+    expect(target.hits).to.be.above(0);
+  });
+
+  it('should succeed when an http-get resource listens on a bad-list port', async function () {
+    const target = await listenBadPort(this, countingTarget());
+    expect(await outcome({ resources: [`http-get://127.0.0.1:${BAD_PORT}/`] })).to.equal('resolved');
+    expect(target.hits).to.be.above(0);
+  });
+
+  it('should succeed when an https resource with ca and strictSSL listens on a bad-list port', async function () {
+    if (!fx) this.skip(); // openssl not available
+    await listenBadPort(this, https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end('ok')), 'localhost');
+    expect(await outcome({ resources: [`https://localhost:${BAD_PORT}/`], strictSSL: true, ca: fx.cert })).to.equal('resolved');
+  });
+
+  it('should follow a redirect onto a bad-list port when followRedirect is true', async function () {
+    const target = await listenBadPort(this, countingTarget());
+    const port = await httpTarget((req, res) => {
+      res.writeHead(302, { Location: badUrl });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(target.hits).to.be.above(0);
+  });
+
+  it('should hand a 3xx from a bad-list port to validateStatus when followRedirect is false', async function () {
+    const target = await listenBadPort(this, countingTarget((req, res) => {
+      res.writeHead(302, { Location: '/elsewhere' });
+      res.end();
+    }));
+    const opts = { resources: [badUrl], followRedirect: false, validateStatus: (status) => status === 302 };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(target.hits).to.be.above(0);
+  });
+
+  it('should route a bad-list port target through an explicit proxy object', async function () {
+    const target = await listenBadPort(this, countingTarget());
+    proxy = await stubProxy.start();
+    const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port), protocol: 'http' };
+    expect(await outcome({ resources: [badUrl], proxy: proxyObj })).to.equal('resolved');
+    expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
+    expect(target.hits).to.be.above(0);
+  });
+
+  it('should route a bad-list port target through HTTP_PROXY from the env', async function () {
+    const target = await listenBadPort(this, countingTarget());
+    proxy = await stubProxy.start();
+    const vars = { HTTP_PROXY: proxy.url, http_proxy: proxy.url };
+    expect(await outcome({ resources: [badUrl] }, { vars })).to.equal('resolved');
+    expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
+    expect(target.hits).to.be.above(0);
+  });
+
+  // Parity guards for leaving fetch: what fetch did implicitly must survive the switch.
+  it('should keep failing an http url with userinfo after leaving fetch', async function () {
+    const port = await httpTarget();
+    expect(await outcome({ resources: [`http://user:pass@localhost:${port}/`], timeout: 600 }, { routed: false })).to.match(/Timed out/);
+  });
+
+  it('should send default accept and user-agent headers, letting caller headers win', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.headers); res.end('ok'); });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(seen[0]).to.include({ accept: '*/*' });
+    // ponytail: the Rust engine (reqwest) sends no default user-agent; JS keeps fetch's
+    if (!isRust) expect(seen[0]).to.include({ 'user-agent': 'undici' });
+    seen.length = 0;
+    const headers = { 'User-Agent': 'probe', Accept: 'text/plain' };
+    expect(await outcome({ resources: [`http://localhost:${port}/a`], headers })).to.equal('resolved');
+    expect(seen[0]).to.include({ accept: 'text/plain', 'user-agent': 'probe' });
+  });
+
+  it('should fail an endless redirect chain even when validateStatus accepts 3xx', async function () {
+    let hop = 0;
+    const port = await httpTarget((req, res) => {
+      res.writeHead(302, { Location: `/r${++hop}` });
+      res.end();
+    });
+    const opts = { resources: [`http://localhost:${port}/`], validateStatus: (status) => status < 400, timeout: 800 };
+    expect(await outcome(opts)).to.match(/Timed out/);
+  });
+});
+
 // Self-checks for the shared test helpers (KTD6, KTD8).
 describe('test helpers: tls fixture and stub proxy', function () {
   this.timeout(30000);

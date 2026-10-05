@@ -65,10 +65,10 @@ const answering = (status) => (req, res) => {
   res.end();
 };
 
-// listens on an ephemeral loopback port; keepAlive 1ms so close() never waits on a client
-async function start(server, extra = {}) {
+// listens on a loopback port (ephemeral by default); keepAlive 1ms so close() never waits on a client
+async function start(server, extra = {}, port = 0) {
   server.keepAliveTimeout = 1;
-  await listening(server, 0, '127.0.0.1');
+  await listening(server, port, '127.0.0.1');
   return { port: server.address().port, close: closer(server), ...extra };
 }
 
@@ -92,6 +92,21 @@ function redirectingHttpServer() {
     res.end();
   };
   return start(http.createServer(handler));
+}
+
+// Unprivileged ports on the WHATWG Fetch bad-port list, which undici fetch refuses (#104).
+// The contract allows no skipped scenario, so the first free one is used.
+const FETCH_BAD_PORTS = [6000, 6665, 6666, 6667, 6668, 6669, 6697, 10080, 5060, 5061, 6566, 4190, 4045, 3659];
+
+async function badPortHttpServer(status) {
+  for (const port of FETCH_BAD_PORTS) {
+    try {
+      return await start(http.createServer(answering(status)), {}, port);
+    } catch (err) {
+      if (err.code !== 'EADDRINUSE' && err.code !== 'EACCES') throw err;
+    }
+  }
+  throw new Error(`every Fetch bad-list port is taken: ${FETCH_BAD_PORTS.join(', ')}`);
 }
 
 // accepts requests and never answers (httpTimeout); close() drops the held connections
@@ -153,6 +168,7 @@ module.exports = {
   delayedTcpServer,
   freePort: getFreePort,
   httpServer,
+  badPortHttpServer,
   recordingHttpServer,
   redirectingHttpServer,
   silentHttpServer,
