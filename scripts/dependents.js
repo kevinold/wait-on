@@ -134,8 +134,11 @@ function tgzVersion(file) {
   return m[1];
 }
 
-// ALL_PROXY too: curl and the baseline's axios-era wait-on (proxy-from-env) honor it
-const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'ALL_PROXY', 'all_proxy'];
+// Every proxy source either side honors: the baseline's axios-era wait-on (proxy-from-env)
+// also reads ALL_PROXY and npm_config_*proxy, which the tarball's undici ignores; curl reads ALL_PROXY.
+const PROXIES = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY'].flatMap((k) => [k, k.toLowerCase()]).concat(
+  ['proxy', 'http_proxy', 'https_proxy', 'no_proxy'].map((k) => `npm_config_${k}`)
+);
 
 // The env a dependent's commands run in: no proxies (they probe localhost), and no
 // pre/post lifecycle scripts (start-server-and-test's pretest runs prettier --write).

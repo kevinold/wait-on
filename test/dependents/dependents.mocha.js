@@ -223,8 +223,22 @@ describe('dependents: commands', function () {
 });
 
 describe('dependents: env', function () {
-  // ALL_PROXY: the baseline's axios-era wait-on (proxy-from-env) and the demos' curl honor it
-  const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'ALL_PROXY', 'all_proxy'];
+  // ALL_PROXY and npm_config_*proxy: the baseline's axios-era wait-on (proxy-from-env) honors
+  // them, the tarball's undici does not; curl honors ALL_PROXY
+  const PROXIES = [
+    'HTTP_PROXY',
+    'http_proxy',
+    'HTTPS_PROXY',
+    'https_proxy',
+    'NO_PROXY',
+    'no_proxy',
+    'ALL_PROXY',
+    'all_proxy',
+    'npm_config_proxy',
+    'npm_config_http_proxy',
+    'npm_config_https_proxy',
+    'npm_config_no_proxy'
+  ];
   const parent = () => {
     const env = { PATH: '/bin' };
     PROXIES.forEach((k) => (env[k] = 'http://127.0.0.1:9'));
