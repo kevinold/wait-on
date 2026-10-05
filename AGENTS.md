@@ -66,11 +66,17 @@ has syntax worth failing fast on.
 ## Commands
 
 - `npm test` — the full check: `npm run lint && npm run test:mocha`.
-- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `bin/wait-on`
+- `npm run lint` — eslint over `lib/**/*.js`, `test/**/*.js`, `features/**/*.js`, `cucumber.js`,
+  `bin/wait-on`
   (flat config `eslint.config.mjs`).
 - `npm run test:mocha` — `mocha --exit "test/**/*.mocha.js"` (`--exit` is required: spun-up
   test servers leave open handles).
 - `npm run test:coverage` — nyc + mocha.
+- `npm run contract` — the consumer contract: cucumber-js runs `features/*.feature` against the
+  packed working tree, installed into the `features/fixtures/{cjs,esm,ts}` projects. Pass
+  cucumber flags after `--` (`--tags`, `--name`, `--world-parameters '{"package":"<tgz|spec>"}'`).
+- `npm run contract:9` — the same contract against the published `wait-on@9.5.1`, minus
+  `@since:10` scenarios.
 - Node engines floor is `>=20.0.0` on master.
 
 ## Conventions
