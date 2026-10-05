@@ -3,6 +3,9 @@
 // npm run dependents: run published dependents' own commands against a packed wait-on
 // tarball. Manifest: test/dependents/dependents.json. See docs/plans/*-dependents-check-plan.md.
 
+const fs = require('fs');
+const path = require('path');
+
 const USAGE =
   'usage: npm run dependents -- [--list] [--only <name>] [--include-optional] [--control] [--tgz <path>] [--keep]';
 
@@ -96,10 +99,120 @@ function parseArgs(argv) {
   return opts;
 }
 
+function cloneArgs(entry, dest) {
+  return ['-c', 'core.longpaths=true', 'clone', '--depth', '1', '--branch', entry.tag, entry.repo, dest];
+}
+
+function installArgs(entry) {
+  return entry.scripts ? ['ci'] : ['ci', '--ignore-scripts'];
+}
+
+// target: { tgz: <absolute path> } for the tarball, { version } for the 9.5.1 control
+function swapArgs(entry, target) {
+  const ignore = entry.scripts ? [] : ['--ignore-scripts'];
+  if (entry.swap === 'install') {
+    const spec = target.tgz || `wait-on@${target.version}`;
+    return [['install', '--no-save', ...ignore, spec]];
+  }
+  const override = target.tgz ? `file:${target.tgz}` : target.version;
+  return [['pkg', 'set', `overrides.wait-on=${override}`], ['install', ...ignore]];
+}
+
+// no shell: `npm ...` runs npm-cli.js under node, `node ...` runs as is
+function nodeArgs(command, npm) {
+  const [first, ...rest] = command.split(/\s+/);
+  return first === 'npm' ? [npm, ...rest] : rest;
+}
+
+function tgzVersion(file) {
+  const m = /^wait-on-(.+)\.tgz$/.exec(path.basename(file));
+  if (!m) throw new Error(`${file}: expected the npm pack output, wait-on-<version>.tgz`);
+  return m[1];
+}
+
+const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+
+// The env a dependent's commands run in: no proxies (they probe localhost), and no
+// pre/post lifecycle scripts (start-server-and-test's pretest runs prettier --write).
+function runEnv(parent) {
+  const env = Object.assign({}, parent);
+  PROXIES.forEach((k) => delete env[k]);
+  env.npm_config_ignore_scripts = 'true';
+  return env;
+}
+
+// npm ls exits 1 after a --no-save swap breaks the dependent's exact pin, so only the
+// parsed versions are judged: every wait-on at any depth must be the expected one.
+function lsVerdict(stdout, version) {
+  let tree;
+  try {
+    tree = JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`npm ls output is not JSON: ${err.message}`);
+  }
+  const found = [];
+  const walk = (node, trail) => {
+    Object.entries(node.dependencies || {}).forEach(([name, dep]) => {
+      const here = trail ? `${trail} > ${name}` : name;
+      if (name === 'wait-on') found.push(`${here}@${dep.version}`);
+      walk(dep, here);
+    });
+  };
+  walk(tree, '');
+  if (found.length === 0) throw new Error('npm ls found no wait-on to swap');
+  const stale = found.filter((f) => !f.endsWith(`@${version}`));
+  if (stale.length) throw new Error(`swap incomplete, expected ${version}: ${stale.join(', ')}`);
+}
+
+// rows: { command, baseline, tarball, control } with control undefined when not run
+function verdict(label, rows) {
+  const withControl = rows.some((r) => r.control !== undefined);
+  const mark = (ok) => (ok ? 'pass' : 'FAIL');
+  const width = Math.max(7, ...rows.map((r) => r.command.length));
+  const line = (cells) => '  ' + cells.map((c, i) => (i === 0 ? c.padEnd(width) : c.padEnd(9))).join(' ').trimEnd();
+  const header = ['command', 'baseline', 'tarball'].concat(withControl ? ['9.5.1'] : [], ['verdict']);
+  let code = 0;
+  const body = rows.map((r) => {
+    let call = 'ok';
+    if (!r.tarball) {
+      call = r.baseline ? 'regression' : 'pre-existing';
+      if (r.baseline) code = 1;
+    }
+    const cells = [r.command, mark(r.baseline), mark(r.tarball)];
+    if (withControl) cells.push(r.control === undefined ? '-' : mark(r.control));
+    return line(cells.concat(call));
+  });
+  return { text: [label, line(header)].concat(body).join('\n') + '\n', code };
+}
+
+// Windows holds node_modules files briefly after their processes exit (EBUSY); cleanup
+// retries and never fails the run.
+function removeDir(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 });
+  } catch {
+    console.error(`could not remove ${dir}; remove it by hand`);
+  }
+}
+
 function main() {}
 
 if (require.main === module) {
   main();
 }
 
-module.exports = { parseManifest, select, listText, parseArgs };
+module.exports = {
+  parseManifest,
+  select,
+  listText,
+  parseArgs,
+  cloneArgs,
+  installArgs,
+  swapArgs,
+  nodeArgs,
+  tgzVersion,
+  runEnv,
+  lsVerdict,
+  verdict,
+  removeDir
+};

@@ -160,3 +160,182 @@ describe('dependents: args', function () {
     expect(() => dependents.parseArgs(['--only'])).to.throw(/--only needs a value/);
   });
 });
+
+describe('dependents: commands', function () {
+  const [sst, jds] = dependents.parseManifest(manifestText());
+  const TGZ = '/p/wait-on-10.0.0-rc.1.tgz';
+  const tarball = { tgz: TGZ };
+  const control = { version: '9.5.1' };
+  const scripted = (entry, scripts) => Object.assign({}, entry, { scripts });
+
+  it('should shallow clone the entry at its tag', function () {
+    expect(dependents.cloneArgs(sst, '/t/sst')).to.eql([
+      '-c',
+      'core.longpaths=true',
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'v3.0.12',
+      'https://github.com/bahmutov/start-server-and-test.git',
+      '/t/sst'
+    ]);
+  });
+
+  it('should install from the lockfile, ignoring scripts unless the entry allows them', function () {
+    expect(dependents.installArgs(sst)).to.eql(['ci', '--ignore-scripts']);
+    expect(dependents.installArgs(jds)).to.eql(['ci']);
+  });
+
+  describe('swap matrix', function () {
+    const cells = [
+      [sst, false, tarball, [['install', '--no-save', '--ignore-scripts', TGZ]]],
+      [sst, true, tarball, [['install', '--no-save', TGZ]]],
+      [sst, false, control, [['install', '--no-save', '--ignore-scripts', 'wait-on@9.5.1']]],
+      [sst, true, control, [['install', '--no-save', 'wait-on@9.5.1']]],
+      [jds, true, tarball, [['pkg', 'set', `overrides.wait-on=file:${TGZ}`], ['install']]],
+      [jds, false, tarball, [['pkg', 'set', `overrides.wait-on=file:${TGZ}`], ['install', '--ignore-scripts']]],
+      [jds, true, control, [['pkg', 'set', 'overrides.wait-on=9.5.1'], ['install']]],
+      [jds, false, control, [['pkg', 'set', 'overrides.wait-on=9.5.1'], ['install', '--ignore-scripts']]]
+    ];
+    cells.forEach(([entry, scripts, target, expected]) => {
+      const label = `${entry.swap}, ${target.tgz ? 'tarball' : 'control'}, scripts ${scripts}`;
+      it(`should build the swap for ${label}`, function () {
+        expect(dependents.swapArgs(scripted(entry, scripts), target)).to.eql(expected);
+      });
+    });
+  });
+
+  it('should run npm commands through npm-cli and node commands directly', function () {
+    expect(dependents.nodeArgs('npm run demo2', '/n/npm-cli.js')).to.eql(['/n/npm-cli.js', 'run', 'demo2']);
+    expect(dependents.nodeArgs('node node_modules/mocha/bin/mocha.js src/*-spec.js', '/n/npm-cli.js')).to.eql([
+      'node_modules/mocha/bin/mocha.js',
+      'src/*-spec.js'
+    ]);
+  });
+
+  it('should read the expected version from the npm pack file name', function () {
+    expect(dependents.tgzVersion('wait-on-10.0.0-rc.1.tgz')).to.equal('10.0.0-rc.1');
+    expect(dependents.tgzVersion(path.join('abs', 'dir', 'wait-on-9.5.1.tgz'))).to.equal('9.5.1');
+    expect(() => dependents.tgzVersion('wait-on.tgz')).to.throw(/npm pack/);
+  });
+});
+
+describe('dependents: env', function () {
+  const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+  const parent = () => {
+    const env = { PATH: '/bin' };
+    PROXIES.forEach((k) => (env[k] = 'http://127.0.0.1:9'));
+    return env;
+  };
+
+  it('should drop every proxy variable and ignore lifecycle scripts', function () {
+    const env = dependents.runEnv(parent());
+    PROXIES.forEach((k) => expect(env).to.not.have.property(k));
+    expect(env.PATH).to.equal('/bin');
+    expect(env.npm_config_ignore_scripts).to.equal('true');
+  });
+
+  it('should not mutate the parent environment', function () {
+    const p = parent();
+    dependents.runEnv(p);
+    expect(p).to.eql(parent());
+  });
+});
+
+describe('dependents: npm ls', function () {
+  const V = '10.0.0-rc.1';
+  const tree = (nested) =>
+    JSON.stringify({
+      name: 'start-server-and-test',
+      problems: [`invalid: wait-on@${V}`],
+      error: { code: 'ELSPROBLEMS' },
+      dependencies: {
+        'wait-on': { version: V, invalid: '"9.1.0" from the root project' },
+        other: { version: '1.0.0', dependencies: { 'wait-on': { version: nested } } }
+      }
+    });
+
+  it('should accept an ELSPROBLEMS tree whose every copy is at the tarball version', function () {
+    expect(() => dependents.lsVerdict(tree(V), V)).to.not.throw();
+  });
+
+  it('should name a nested copy left at another version', function () {
+    expect(() => dependents.lsVerdict(tree('9.1.0'), V))
+      .to.throw(/other > wait-on@9\.1\.0/)
+      .and.to.match(/10\.0\.0-rc\.1/);
+  });
+
+  it('should name a workspace copy left at another version', function () {
+    const ws = JSON.stringify({
+      dependencies: { 'jest-dev-server': { version: '11.0.0', dependencies: { 'wait-on': { version: '8.0.1' } } } }
+    });
+    expect(() => dependents.lsVerdict(ws, V)).to.throw(/jest-dev-server > wait-on@8\.0\.1/);
+  });
+
+  it('should fail when no wait-on is installed', function () {
+    expect(() => dependents.lsVerdict('{"name":"x"}', V)).to.throw(/no wait-on/);
+  });
+
+  it('should fail on output that is not JSON', function () {
+    expect(() => dependents.lsVerdict('npm ERR!', V)).to.throw(/npm ls/);
+  });
+});
+
+describe('dependents: verdict', function () {
+  const row = (baseline, tarball, control) => ({ command: 'npm run demo', baseline, tarball, control });
+
+  it('should call a command passing on the tarball ok', function () {
+    const { text, code } = dependents.verdict('sst v1', [row(true, true)]);
+    expect(code).to.equal(0);
+    ['npm run demo', 'pass', 'ok'].forEach((s) => expect(text).to.include(s));
+  });
+
+  it('should call a tarball failure that passed on baseline a regression', function () {
+    const { text, code } = dependents.verdict('sst v1', [row(true, false)]);
+    expect(code).to.equal(1);
+    expect(text).to.include('regression');
+  });
+
+  it('should call a failure on both runs pre-existing', function () {
+    const { text, code } = dependents.verdict('sst v1', [row(false, false)]);
+    expect(code).to.equal(0);
+    expect(text).to.include('pre-existing');
+  });
+
+  it('should call a tarball pass after a baseline failure ok', function () {
+    const { text, code } = dependents.verdict('sst v1', [row(false, true)]);
+    expect(code).to.equal(0);
+    expect(text).to.include('ok');
+  });
+
+  it('should exit 1 when any row regressed', function () {
+    expect(dependents.verdict('sst v1', [row(true, true), row(true, false)]).code).to.equal(1);
+  });
+
+  it('should show the 9.5.1 column only when the control ran', function () {
+    expect(dependents.verdict('sst v1', [row(true, true)]).text).to.not.include('9.5.1');
+    const { text, code } = dependents.verdict('sst v1', [row(true, true, false)]);
+    expect(text).to.include('9.5.1');
+    expect(code).to.equal(0);
+    const line = text.split('\n').find((l) => l.includes('npm run demo'));
+    expect(line).to.match(/pass\s+pass\s+FAIL\s+ok/);
+  });
+});
+
+describe('dependents: cleanup', function () {
+  const temp = require('temp');
+  temp.track();
+
+  it('should remove a directory with nested files', function () {
+    const dir = temp.mkdirSync('dependents-cleanup');
+    fs.mkdirSync(path.join(dir, 'a', 'b'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a', 'b', 'f.txt'), 'x');
+    dependents.removeDir(dir);
+    expect(fs.existsSync(dir)).to.equal(false);
+  });
+
+  it('should return quietly for a path that does not exist', function () {
+    expect(() => dependents.removeDir(path.join(temp.dir, 'dependents-missing-dir'))).to.not.throw();
+  });
+});
