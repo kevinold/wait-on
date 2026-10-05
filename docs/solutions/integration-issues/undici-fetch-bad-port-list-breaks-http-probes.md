@@ -27,8 +27,8 @@ PR #238 moved wait-on's http checks from axios to undici `fetch`. Fetch implemen
 "bad port" list (1, 7, 9, ..., 5060, 5061, 6000, 6566, 6665-6669, 6697, 10080). It rejects a
 request to those ports with `TypeError: fetch failed` (cause `bad port`) **before connecting**.
 wait-on read that as "not ready yet" and polled until timeout. 9.x (axios) has no such list, so
-this was a silent regression for anyone waiting on :6000 (start-server-and-test's own
-`demo-multiple` does). Repro: `node -e "require('undici').fetch('http://127.0.0.1:6000/').catch(e=>console.log(e.cause.message))"`
+this was a silent regression for anyone waiting on :6000, as
+start-server-and-test's own `demo-multiple` script (defined in its package.json, not wait-on's) does. Repro: `node -e "require('undici').fetch('http://127.0.0.1:6000/').catch(e=>console.log(e.cause.message))"`
 prints `bad port`.
 
 ## Root cause

@@ -22,8 +22,8 @@ tags: [dependents, release, start-server-and-test, tarball, regression]
 succeed. wait-on's own suite was green, because every test server listened on an ephemeral
 port or a hand-picked one like 3000, and none is on the Fetch bad-port list. The bug was found
 on the Rust-engine spike fork by running start-server-and-test's own suite (2.4M weekly
-downloads) against a packed local tarball: its `npm run demo-multiple` waits on ports 6000 and
-6010. It passes against wait-on 9.1.0 and fails against the 10.x tarball.
+downloads) against a packed local tarball. start-server-and-test's own `demo-multiple` script (defined in its package.json, not wait-on's)
+waits on ports 6000 and 6010. It passes against wait-on 9.1.0 and fails against the 10.x tarball.
 
 ## Guidance
 
@@ -37,8 +37,8 @@ Practical notes from doing it:
 
 - Install the tarball with `npm install --no-save <tgz>`; the dependent's exact pin then makes
   `npm ls wait-on` exit non-zero, so parse its JSON instead of trusting the exit code.
-- Set `npm_config_ignore_scripts=true`: start-server-and-test's `pretest` runs
-  `prettier --write`.
+- Set `npm_config_ignore_scripts=true`: start-server-and-test's own `pretest` script (in its
+  package.json, not wait-on's) runs `prettier --write`.
 - Few big tools depend on wait-on directly (nx, cypress, playwright, storybook do not), so
   the list is short: start-server-and-test and jest-dev-server.
 

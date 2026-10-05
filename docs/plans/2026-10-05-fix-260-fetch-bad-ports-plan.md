@@ -17,7 +17,7 @@ Implementation-ready plan for jeffbski/wait-on#260 on branch `fix/260-fetch-bad-
 
 - **Objective:** an `http:`/`https:`/`http-get:`/`https-get:` wait on a live server whose port
   is on the WHATWG Fetch bad-port list (6000, 5060/5061, 6665-6669, 10080, ...) resolves again,
-  as it did on every 9.x release (axios). start-server-and-test `demo-multiple` (ports
+  as it did on every 9.x release (axios). start-server-and-test's own `demo-multiple` script (its package.json, not wait-on's; ports
   6000/6010) passes on 10.x.
 - **Means:** replace undici `fetch` with `dispatcher.request` on the existing per-request
   dispatcher, composed with `interceptors.redirect` when `followRedirect` is true (KTD1, KTD2).
