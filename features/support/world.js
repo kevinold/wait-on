@@ -109,4 +109,4 @@ class ContractWorld extends World {
 
 setWorldConstructor(ContractWorld);
 
-module.exports = { tsc };
+module.exports = { tsc, RUNNERS };

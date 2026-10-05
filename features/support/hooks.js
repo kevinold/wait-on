@@ -9,10 +9,10 @@ const os = require('os');
 const path = require('path');
 const { BeforeAll, Before, After, AfterAll } = require('@cucumber/cucumber');
 const { packageSource, fixtureOf, installArgs } = require('./project');
-const { tsc } = require('./world');
+const { tsc, RUNNERS } = require('./world');
 
 const REPO = path.resolve(__dirname, '..', '..');
-const FIXTURES = ['cjs', 'esm', 'ts'];
+const FIXTURES = Object.keys(RUNNERS);
 let root; // every temp project of this run
 const projects = {}; // fixture -> installed project dir
 
