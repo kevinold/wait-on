@@ -81,7 +81,8 @@ Feature: The Promise and callback forms
       """
     Then the wait resolves
 
-  @kind:bad @route:js
+  # 9.5.1: a malformed HTTP_PROXY was ignored for a NO_PROXY host; the wait polled until "Timed out waiting for"
+  @kind:bad @route:js @since:10
   Scenario: a malformed env proxy reaches the callback
     Given the environment variable HTTP_PROXY is "proxy.corp:3128"
     And the environment variable NO_PROXY is "localhost"
@@ -96,7 +97,8 @@ Feature: The Promise and callback forms
       Invalid URL protocol: the URL must start with `http:` or `https:`.
       """
 
-  @kind:bad @route:js
+  # 9.5.1: a proxy host that cannot form a URL was accepted; the wait polled until "Timed out waiting for"
+  @kind:bad @route:js @since:10
   Scenario: a proxy object that cannot form a URL reaches the callback
     When the consumer calls waitOn with a callback and:
       """

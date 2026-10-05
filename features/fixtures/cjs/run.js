@@ -18,6 +18,17 @@ const settle = (err) => {
     result.errorMessage = err.message;
   }
   result.elapsedMs = Date.now() - start;
+  // a handle left open after settling (9.5.1's unanswered axios request) would keep the
+  // process from ever reaching beforeExit: report and exit anyway
+  setTimeout(() => {
+    report();
+    process.exit();
+  }, 500).unref();
+};
+let reported = false;
+const report = () => {
+  if (!reported) console.log(JSON.stringify(result));
+  reported = true;
 };
 
 if (process.argv.includes('--callback')) {
@@ -39,4 +50,4 @@ if (process.argv.includes('--callback')) {
   returned.then(() => settle(), settle);
 }
 
-process.once('beforeExit', () => console.log(JSON.stringify(result)));
+process.once('beforeExit', report);

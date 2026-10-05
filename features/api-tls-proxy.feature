@@ -116,6 +116,20 @@ Feature: TLS material and proxies
     And the proxy carried nothing
     And the server saw the check
 
+  # 9.5.1: ALL_PROXY carried http checks through the proxy
+  @kind:good @since:10
+  Scenario: ALL_PROXY is not a proxy setting
+    Given a proxy that records what it carries
+    And the environment variable ALL_PROXY is "<proxy>"
+    And an HTTP server answering 200 that records requests
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
+    And the proxy carried nothing
+    And the server saw the check
+
   @kind:good
   Scenario: NO_PROXY sends a matching host direct
     Given a proxy that records what it carries

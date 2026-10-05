@@ -32,6 +32,18 @@ Feature: Options and resource syntax are checked before anything is polled
       "httpsAgent" is not allowed
       """
 
+  # 9.5.1: any proxy object passed validation; the wait polled until "Timed out waiting for"
+  @kind:bad @since:10
+  Scenario: a proxy object without a port is rejected
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["http://localhost:1/"], "timeout": 2000, "proxy": { "host": "127.0.0.1" } }
+      """
+    Then the wait rejects with a ValidationError:
+      """
+      "proxy.port" is required
+      """
+
   @kind:good
   Scenario: a bare tcp port waits on localhost
     Given a TCP server on localhost
