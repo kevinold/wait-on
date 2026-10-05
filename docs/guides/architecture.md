@@ -33,7 +33,7 @@
 | `socket:` | `createSocket$` | unix socket / Windows named pipe connects |
 | `command:` | `createCommand$` | command exits 0 (per-attempt `commandTimeout`) |
 
-- **HTTP:** undici `fetch` with a dispatcher from `buildDispatcher` (TLS `ca`/`cert`/`key`/`passphrase`/`strictSSL`, `proxy`, env proxies via `EnvHttpProxyAgent`, `http://unix:<sock>:<path>` via `socketPath`).
+- **HTTP:** undici `dispatcher.request` (not `fetch`: Fetch bad-list ports, #104) on a dispatcher from `buildDispatcher`, plus `interceptors.redirect` when `followRedirect` (TLS `ca`/`cert`/`key`/`passphrase`/`strictSSL`, `proxy`, env proxies via `EnvHttpProxyAgent`, `http://unix:<sock>:<path>` via `socketPath`).
 - **Reverse:** `reverse: true` inverts each check (`negateAsync`; `file:` waits for size -1).
 
 ## Rust engine layout
@@ -136,8 +136,8 @@ The bare FFI call is about 14 ns, and the `validateStatus` threadsafe round trip
 
 On the Rust engine, beyond the per-check differences listed with each check above:
 
-- Default request headers: undici sends `user-agent: undici`, `accept-language`, `sec-fetch-mode`; reqwest sends `accept: */*` only.
-- Redirect hop limit: 20 on both (reqwest `Policy::limited(20)`, undici fetch's limit).
+- Default request headers: the JS engine sends `accept: */*` and `user-agent: undici` (what fetch sent, kept when it moved to `dispatcher.request`, #104); reqwest sends `accept: */*` only.
+- Redirect hop limit: 20 on both, and the 21st hop fails the check (reqwest `Policy::limited(20)`; undici `interceptors.redirect` with `throwOnMaxRedirect`). Both follow a `300` with `Location`.
 - TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout` (under `reverse` it reads as gone on the first poll).
 - `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.
 - Certificate shape under `strictSSL: true`: webpki requires the server name in `subjectAltName` and rejects an end-entity certificate with `basicConstraints CA:TRUE`. Node accepts a CN-only or CA-flagged self-signed certificate supplied as its own `ca`; Rust times out on it. The test fixture (`test/helpers/tls-fixture.js`) generates a SAN, `CA:FALSE` leaf so both engines verify it.

@@ -2,7 +2,17 @@
 Feature: HTTP request options
   headers and auth are sent with every check, redirects are followed unless
   followRedirect is false, validateStatus replaces the 2xx rule, and httpTimeout fails a
-  check whose response does not arrive in time.
+  check whose response does not arrive in time. A port on the Fetch bad-port list (6000,
+  6665-6669, 10080, ...) is reached like any other.
+
+  @kind:good
+  Scenario: a server on a Fetch bad-list port is reached
+    Given an HTTP server on a Fetch bad-list port answering 200
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
 
   @kind:good
   Scenario: headers reach the server
