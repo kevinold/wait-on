@@ -9,8 +9,15 @@ const waitOn = require('wait-on');
 
 const opts = JSON.parse(process.argv[2]);
 if (typeof opts.validateStatus === 'string') opts.validateStatus = new Function('status', opts.validateStatus);
+const callback = process.argv.includes('--callback');
 const start = Date.now();
 const result = { exportType: typeof waitOn, cbCalls: 0 };
+let reported = false;
+const report = () => {
+  if (reported) return;
+  reported = true;
+  console.log(JSON.stringify(result));
+};
 const settle = (err) => {
   result.outcome = err ? 'rejected' : 'resolved';
   if (err) {
@@ -19,19 +26,17 @@ const settle = (err) => {
   }
   result.elapsedMs = Date.now() - start;
   // a handle left open after settling (9.5.1's unanswered axios request) would keep the
-  // process from ever reaching beforeExit: report and exit anyway
+  // process from ever reaching beforeExit: report and exit anyway. In callback form wait
+  // out the timeout first, so a timeout-driven second callback is still counted.
+  // (capped: a delay past 2^31-1 ms would fire after 1 ms)
+  const grace = callback ? Math.min(Math.max(500, (opts.timeout || 0) - result.elapsedMs + 250), 2 ** 31 - 1) : 500;
   setTimeout(() => {
     report();
     process.exit();
-  }, 500).unref();
-};
-let reported = false;
-const report = () => {
-  if (!reported) console.log(JSON.stringify(result));
-  reported = true;
+  }, grace).unref();
 };
 
-if (process.argv.includes('--callback')) {
+if (callback) {
   let sync = true;
   const returned = waitOn(opts, (err) => {
     result.cbCalls += 1;
