@@ -78,8 +78,8 @@ function select(entries, opts, platform) {
 function listText(entries) {
   return entries
     .map((e) => {
-      const os = e.os.length ? e.os.join(',') : 'all';
-      const head = `${e.name}  ${e.tag}  swap=${e.swap}  os=${os}  optional=${e.optional ? 'yes' : 'no'}`;
+      const hosts = e.os.length ? e.os.join(',') : 'all';
+      const head = `${e.name}  ${e.tag}  swap=${e.swap}  os=${hosts}  optional=${e.optional ? 'yes' : 'no'}`;
       return [head].concat(e.run.map((cmd) => `  ${cmd}`)).join('\n');
     })
     .join('\n\n');
@@ -134,7 +134,8 @@ function tgzVersion(file) {
   return m[1];
 }
 
-const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+// ALL_PROXY too: curl and the baseline's axios-era wait-on (proxy-from-env) honor it
+const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'ALL_PROXY', 'all_proxy'];
 
 // The env a dependent's commands run in: no proxies (they probe localhost), and no
 // pre/post lifecycle scripts (start-server-and-test's pretest runs prettier --write).

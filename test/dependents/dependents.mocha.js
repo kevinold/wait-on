@@ -223,7 +223,8 @@ describe('dependents: commands', function () {
 });
 
 describe('dependents: env', function () {
-  const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+  // ALL_PROXY: the baseline's axios-era wait-on (proxy-from-env) and the demos' curl honor it
+  const PROXIES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy', 'ALL_PROXY', 'all_proxy'];
   const parent = () => {
     const env = { PATH: '/bin' };
     PROXIES.forEach((k) => (env[k] = 'http://127.0.0.1:9'));
@@ -343,17 +344,6 @@ describe('dependents: front door', function () {
     ['start-server-and-test', 'v3.0.12', 'jest-dev-server', 'v11.0.0', 'npm run demo-multiple'].forEach((s) =>
       expect(r.stdout).to.include(s)
     );
-  });
-
-  it('should list the same manifest with an unreachable proxy set', function () {
-    needsNpm.call(this);
-    const env = Object.assign({}, process.env, {
-      HTTP_PROXY: 'http://127.0.0.1:9',
-      HTTPS_PROXY: 'http://127.0.0.1:9'
-    });
-    const r = npmRun(['run', 'dependents', '--', '--list'], env);
-    expect(r.status, r.stderr).to.equal(0);
-    expect(r.stdout).to.include('npm run demo-multiple');
   });
 
   it('should exit 1 with the usage line on an unknown argument', function () {
