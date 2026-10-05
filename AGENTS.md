@@ -191,8 +191,9 @@ fails) installs the package once per run into fresh temp copies of the fixture p
 - **Fixtures.** `cjs/run.js` is the full runner: JSON options and an optional `--callback` in,
   one JSON result line out (`outcome`, `errorName`, `errorMessage`, `cbCalls`, `cbArg`,
   `cbSync`, `returned`, `elapsedMs`) after any log output; a string `validateStatus` is the body
-  of `function (status)`. It reports at `beforeExit`, or 500 ms after settling when a handle
-  keeps the process alive (9.5.1 leaves an unanswered request open). `esm/run.mjs` and
+  of `function (status)`. It reports at `beforeExit`, or exits shortly after settling when a
+  handle keeps the process alive (9.5.1 leaves an unanswered request open); in callback form it
+  first waits out the wait's timeout so a late second callback is counted. `esm/run.mjs` and
   `ts/run.ts` (compiled once per run, `@types/node` at the locked version) run the Promise form;
   `esm/named.mjs` is the named import that must fail.
 - **Tags.** Layers `@api`, `@cli`, `@engine`, `@consumer`; `@kind:good` / `@kind:bad` pair what
@@ -242,6 +243,9 @@ with `--name`; only a failure that reproduces counts. Verdict per scenario:
 - red on 10.x, green on 9.5.1: **regression**, blocks GA. Never tag it.
 - red on both: **harness defect**; fix the scenario or step (never `lib/`) before reading verdicts.
 - red on 9.5.1 only on an elapsed bound: harness defect (tolerance), never `@since:10`.
+- red on 9.5.1 on a cucumber step or hook timeout: harness defect until a direct run of the
+  fixture shows 9.5.1 itself misbehaving
+  (`docs/solutions/test-failures/contract-runner-hangs-on-9-5-1-open-handle.md`).
 - green on 10.x, red on 9.5.1: **intentional change**. Tag `@since:10` with a one-line
   `# 9.5.1: <behavior it replaces>` directly above the tag line. The PR body lists those lines;
   each becomes a BREAKING or fixed release-note entry.
