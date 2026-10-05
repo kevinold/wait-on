@@ -6,6 +6,7 @@ module: docs/guides/releasing.md
 problem_type: best_practice
 component: rust-engine
 severity: high
+last_updated: 2026-10-05
 applies_when:
   - Verifying a wait-on prerelease from its installed tarball (lane L10, #62, or any later rs-* tag)
   - Writing a driver or test that claims "the Rust engine ran" under WAIT_ON_ENGINE=rust or rust-strict
@@ -135,3 +136,17 @@ Related:
 (the other silent fallback: under `WAIT_ON_ENGINE=rust` a failed addon load falls back to JS),
 [`porting-undici-tls-options-to-reqwest-rustls.md`](porting-undici-tls-options-to-reqwest-rustls.md).
 Lane plan: `docs/plans/2026-09-30-spike-rs-l10-test-release-plan.md` (#62).
+
+## Update 2026-10-05: per-wait routing, child processes, and the counting-addon trap
+
+- `WAIT_ON_ENGINE=rust-strict` proves only that the addon loaded. Routing is per wait: an https
+  target behind an env proxy and a URL with userinfo still run on the JS engine
+  (`routesHttpToRust` in `lib/resources.js`). Assert the route per scenario.
+- For child processes (CLIs, `command:` children, dependents' suites), ride a
+  `NODE_OPTIONS=--require` preload that records `process.dlopen` calls and whether
+  `lib/engine-js.js` entered `require.cache`, and writes them at exit
+  (`features/support/proof-preload.js`). Judge all of a run's records together.
+- `test/fixtures/counting-addon.js` delegates to `prebuilds/<host>/wait-on.node` when it exists
+  and otherwise answers canned results. Without a host prebuild, about 18 rust-strict mocha tests
+  fail for reasons unrelated to the change. Build it first (`npm run build:napi`; `ci:rs` does).
+
