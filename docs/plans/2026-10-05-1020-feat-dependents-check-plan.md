@@ -120,7 +120,7 @@ Add a manifest-driven dependents check to `next`: `npm run dependents` clones ea
 
 - Issue jeffbski/wait-on#264 (Shape, Initial manifest, Tracking).
 - Spike prior art on `spike-next-rs`: `xtask/src/dependents.rs` and `xtask/assets/dependents.json` (manifest fields, `npm ls` walk, verdict table, select rules, cleanup retry), and `docs/solutions/best-practices/dependents-harness-npm-and-candidate-list.md` (`npm ls` exits 1 after a `--no-save` swap; `npm_config_ignore_scripts` keeps start-server-and-test's `pretest` from running `prettier --write` on the clone).
-- start-server-and-test v3.0.12 `package.json`: `"wait-on": "9.1.0"` exact pin; `pretest` runs `lint` which runs `prettier --write`; `demo3` invokes `npm run test` internally (pre/post hooks suppressed by R14); `demo2`, `demo7`, `demo12` need `curl`; `demo9`, `demo-interval`, `demo-timeout`, `demo-json-server`, `demo-ip6` use the `cross-env` devDependency; `demo-multiple` waits on 6000 and 6010.
+- start-server-and-test v3.0.12 `package.json`: `"wait-on": "9.1.0"` exact pin; `pretest` runs `lint` which runs `prettier --write`; `demo3` invokes `npm run test` internally (pre/post hooks suppressed by R14); `demo2`, `demo7`, `demo12`, `demo-interval`, `demo-timeout` (via `test2`) and `demo-multiple` need `curl`; `demo9`, `demo-interval`, `demo-timeout`, `demo-json-server`, `demo-ip6` use the `cross-env` devDependency; `demo-multiple` waits on 6000 and 6010.
 - Repo facts on `next` at 9c0f38b: `package.json` `files` = `bin/`, `lib/`, `exampleConfig.js`, `index.d.ts`; lint glob covers `lib`, `test`, `bin/wait-on` only while `eslint.config.mjs` already matches `**/*.js`; mocha glob `test/**/*.mocha.js`; `.mocharc.json` requires `test/frozen-clock.js`; `bin/wait-on` exports its parser under `if (require.main === module)` (pattern to mirror); `test/cli.mocha.js` spawns `process.execPath` for subprocess tests; `.github/RELEASING.md` holds the release runbook; `scripts/` holds only `reindex-codebase-memory.sh`; `AGENTS.md` has no `npm run dependents` bullet.
 
 ---
@@ -173,7 +173,7 @@ flowchart TB
 
 - `npm run` sets `npm_execpath` to npm's `npm-cli.js` on ubuntu, macOS and Windows, including the CI matrix runners.
 - `wait-on@9.5.1` is published on the npm registry at run time.
-- `git` and `curl` are on PATH where the on-demand run happens (curl ships with Windows 10+, macOS, and ubuntu runners); a missing `curl` surfaces as `pre-existing` rows, not a harness error.
+- `git` and `curl` are on PATH where the on-demand run happens (curl ships with Windows 10+, macOS, and ubuntu runners). A missing `curl` surfaces as `pre-existing` rows, not a harness error, and those rows cannot show a tarball regression: `demo-multiple` (the #260 control) runs `curl`, so an RC/GA run on a host without `curl` cannot judge it. The release step requires `curl`.
 - `npm pack --json` prints an array whose first element has `filename` (and `--dry-run --json` has `files[].path`), on the npm bundled with Node 22, 24 and 26.
 - The start-server-and-test `v3.0.12` tag's `package.json` matches the evidence (scripts and the exact `9.1.0` pin).
 - `fs.rmSync` honors `maxRetries`/`retryDelay` on the Node engines floor (22.19).
@@ -306,8 +306,8 @@ U1 → U2 → U3 → U4. U1 and U2 are pure and can be red/green in isolation; U
 - **Dependencies:** U3.
 - **Files:** `.github/RELEASING.md` (modify), `AGENTS.md` (modify).
 - **Approach:**
-  1. `.github/RELEASING.md`: in "Ship a release candidate on `next`" and "Promote the release candidate to 10.0.0", add one step before approving the Release run: run `npm run dependents` (and `npm run dependents -- --include-optional` on a linux host) on the checkout; a `regression` row blocks approval until it is fixed or the manifest entry is shown to be at fault; `--list` shows what will run.
-  2. `AGENTS.md` Commands section: add an `npm run dependents` bullet: on demand, Node script `scripts/dependents.js`, manifest `test/dependents/dependents.json`, flags, not in CI, run before each RC/GA per `.github/RELEASING.md`.
+  1. `.github/RELEASING.md`: in "Ship a release candidate on `next`" (both the first rc's approval and step 4's later rcs) and "Promote the release candidate to 10.0.0", add one step before approving each Release run: run `npm run dependents` on the checkout, on a host with `git` and `curl` (on linux, `npm run dependents -- --include-optional` covers both entries); a `regression` row blocks approval until it is fixed or the manifest entry is shown to be at fault; `--list` shows what will run.
+  2. `AGENTS.md` Commands section: add an `npm run dependents` bullet: on demand, Node script `scripts/dependents.js`, manifest `test/dependents/dependents.json`, flags, not in CI, run before each RC/GA per `.github/RELEASING.md`; also add `scripts/**/*.js` to the `npm run lint` bullet's globs (R17).
 - **Test expectation:** none -- docs-only edits (AGENTS.md carve-out).
 - **Verification:** both files read correctly rendered.
 
