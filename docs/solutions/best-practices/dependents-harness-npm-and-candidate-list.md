@@ -18,7 +18,8 @@ tags: [dependents, npm, start-server-and-test, regression, spike-next-rs]
 ## Context
 
 `cargo xtask dependents` found the Fetch bad-port regression (#104, upstream #260):
-start-server-and-test's `demo-multiple` waits on ports 6000/6010 and failed under `js` only.
+start-server-and-test's own `demo-multiple` script (defined in its package.json, not wait-on's) waits on ports 6000/6010
+and failed under `js` only.
 No repo test used a bad-list port.
 
 ## Guidance
@@ -27,7 +28,8 @@ No repo test used a bad-list port.
   exact pin, so `npm ls wait-on --all --json` exits 1 (ELSPROBLEMS). Parse the JSON and check
   every version; ignore the exit code.
 - **Turn off lifecycle scripts.** Set `npm_config_ignore_scripts=true`. start-server-and-test's
-  demos fall back to `npm test`, whose `pretest` runs `prettier --write` on the clone.
+  own demo scripts fall back to its `npm test`, whose `pretest` (in its package.json, not
+  wait-on's) runs `prettier --write` on the clone.
 - **The candidate list is short.** Only start-server-and-test (about 2.4M weekly downloads) and
   jest-dev-server (about 340k; `@mozillasecurity/jest-dev-server` is a republish) are viable
   published dependents. nx, cypress, playwright and storybook do not depend on wait-on.

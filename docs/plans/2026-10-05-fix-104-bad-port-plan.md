@@ -22,7 +22,8 @@ spike split the JS engine out of `lib/wait-on.js`.
 
 - **Objective:** a library or CLI consumer waiting on an http server whose port is on the
   WHATWG Fetch bad-port list (6000, 6665-6669, 10080, ...) succeeds under `WAIT_ON_ENGINE=js`
-  (the default) and `rust-strict`, as on every 9.x. start-server-and-test `demo-multiple`
+  (the default) and `rust-strict`, as on every 9.x. start-server-and-test's own `demo-multiple` script (its
+  package.json, not wait-on's)
   passes three ways in `npm run dependents`.
 - **Means:** the upstream change (undici `dispatcher.request` + `interceptors.redirect`
   instead of `fetch`) applied to `httpCallSucceeds` in `lib/engine-js.js` (KTD1), pinned by
@@ -39,7 +40,8 @@ spike split the JS engine out of `lib/wait-on.js`.
 
 The spike's JS engine still calls undici `fetch`, which refuses bad-list ports before
 connecting, so an http wait on :6000 times out under `js`. The Rust engine (reqwest) has no
-bad-port list and already passes. The dependents harness found it (`demo-multiple`).
+bad-port list and already passes. The dependents harness found it (start-server-and-test's own `demo-multiple`
+script, not a wait-on script).
 
 ### Requirements
 
