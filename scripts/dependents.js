@@ -3,7 +3,9 @@
 // npm run dependents: run published dependents' own commands against a packed wait-on
 // tarball. Manifest: test/dependents/dependents.json. See docs/plans/*-dependents-check-plan.md.
 
+const childProcess = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const USAGE =
@@ -195,10 +197,113 @@ function removeDir(dir) {
   }
 }
 
-function main() {}
+const CONTROL_VERSION = '9.5.1';
+const ROOT = path.join(__dirname, '..');
+const MANIFEST = path.join(ROOT, 'test', 'dependents', 'dependents.json');
+
+
+// child processes never go through a shell: npm runs as `node npm-cli.js ...`
+function exec(file, args, cwd, env, capture) {
+  const r = childProcess.spawnSync(file, args, {
+    cwd,
+    env,
+    stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024
+  });
+  if (r.error) throw r.error;
+  return r;
+}
+
+function packTarball(npm, dir) {
+  const r = exec(process.execPath, [npm, 'pack', '--json', '--pack-destination', dir], ROOT, process.env, true);
+  if (r.status !== 0) throw new Error('npm pack failed');
+  return path.join(dir, JSON.parse(r.stdout)[0].filename);
+}
+
+function runEntry(entry, ctx) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `dependents-${entry.name}-`));
+  const clone = path.join(dir, 'repo');
+  const npm = (args, what) => {
+    if (exec(process.execPath, [ctx.npm, ...args], clone, process.env).status !== 0) {
+      throw new Error(`${entry.name}: ${what} failed (kept ${dir})`);
+    }
+  };
+  const runAll = (label) => {
+    const env = runEnv(process.env);
+    return entry.run.map((cmd) => {
+      console.log(`> ${entry.name} [${label}] ${cmd}`);
+      return exec(process.execPath, nodeArgs(cmd, ctx.npm), clone, env).status === 0;
+    });
+  };
+  const swapAndProve = (target, version) => {
+    swapArgs(entry, target).forEach((args) => npm(args, `npm ${args.join(' ')}`));
+    const ls = exec(process.execPath, [ctx.npm, 'ls', 'wait-on', '--all', '--json'], clone, process.env, true);
+    try {
+      lsVerdict(ls.stdout, version);
+    } catch (err) {
+      throw new Error(`${entry.name}: ${err.message} (kept ${dir})`);
+    }
+  };
+
+  console.log(`> ${entry.name}: clone ${entry.repo} ${entry.tag} into ${clone}`);
+  if (exec('git', cloneArgs(entry, clone), dir, process.env).status !== 0) {
+    throw new Error(`${entry.name}: git clone failed (kept ${dir})`);
+  }
+  npm(installArgs(entry), 'npm ci');
+  entry.build.forEach((cmd) => {
+    if (exec(process.execPath, nodeArgs(cmd, ctx.npm), clone, process.env).status !== 0) {
+      throw new Error(`${entry.name}: ${cmd} failed (kept ${dir})`);
+    }
+  });
+
+  const baseline = runAll('baseline');
+  swapAndProve({ tgz: ctx.tgz }, ctx.version);
+  const tarball = runAll('tarball');
+  let control = [];
+  if (ctx.control) {
+    swapAndProve({ version: CONTROL_VERSION }, CONTROL_VERSION);
+    control = runAll(`control ${CONTROL_VERSION}`);
+  }
+
+  const rows = entry.run.map((command, i) => ({ command, baseline: baseline[i], tarball: tarball[i], control: control[i] }));
+  const { text, code } = verdict(`\n${entry.name} ${entry.tag}`, rows);
+  console.log(text);
+  if (ctx.keep || code !== 0) console.log(`  kept ${dir}`);
+  else removeDir(dir);
+  return code;
+}
+
+function main(argv) {
+  const opts = parseArgs(argv);
+  const entries = parseManifest(fs.readFileSync(MANIFEST, 'utf8'));
+  if (opts.list) {
+    console.log(listText(entries));
+    return 0;
+  }
+  const picked = select(entries, opts, process.platform);
+  const npm = process.env.npm_execpath;
+  if (!npm) throw new Error('npm_execpath is not set: run this through npm run dependents');
+  let tgz;
+  if (opts.tgz) {
+    tgz = path.resolve(opts.tgz);
+  } else {
+    const packDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dependents-pack-'));
+    tgz = packTarball(npm, packDir);
+  }
+  const ctx = { npm, tgz, version: tgzVersion(tgz), control: opts.control, keep: opts.keep };
+  console.log(`> dependents: ${picked.map((e) => e.name).join(', ')} against ${tgz}`);
+  // one entry at a time: the dependents bind fixed ports
+  return picked.reduce((code, entry) => Math.max(code, runEntry(entry, ctx)), 0);
+}
 
 if (require.main === module) {
-  main();
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch (err) {
+    console.error(err.message);
+    process.exitCode = 1;
+  }
 }
 
 module.exports = {

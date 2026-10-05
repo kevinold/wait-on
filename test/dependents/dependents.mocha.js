@@ -323,6 +323,77 @@ describe('dependents: verdict', function () {
   });
 });
 
+const ROOT = path.join(__dirname, '..', '..');
+const SCRIPT = path.join(ROOT, 'scripts', 'dependents.js');
+const spawn = (args, env) =>
+  require('child_process').spawnSync(process.execPath, args, { cwd: ROOT, env: env || process.env, encoding: 'utf8' });
+const npmRun = (args, env) => spawn([process.env.npm_execpath].concat(args), env);
+function needsNpm() {
+  if (!process.env.npm_execpath) this.skip(); // mocha not launched through npm
+}
+
+describe('dependents: front door', function () {
+  this.timeout(30000);
+
+  it('should list the manifest through npm run dependents -- --list', function () {
+    needsNpm.call(this);
+    const r = npmRun(['run', 'dependents', '--', '--list']);
+    expect(r.status, r.stderr).to.equal(0);
+    ['start-server-and-test', 'v3.0.12', 'jest-dev-server', 'v11.0.0', 'npm run demo-multiple'].forEach((s) =>
+      expect(r.stdout).to.include(s)
+    );
+  });
+
+  it('should list the same manifest with an unreachable proxy set', function () {
+    needsNpm.call(this);
+    const env = Object.assign({}, process.env, {
+      HTTP_PROXY: 'http://127.0.0.1:9',
+      HTTPS_PROXY: 'http://127.0.0.1:9'
+    });
+    const r = npmRun(['run', 'dependents', '--', '--list'], env);
+    expect(r.status, r.stderr).to.equal(0);
+    expect(r.stdout).to.include('npm run demo-multiple');
+  });
+
+  it('should exit 1 with the usage line on an unknown argument', function () {
+    const r = spawn([SCRIPT, '--frob']);
+    expect(r.status).to.equal(1);
+    expect(r.stderr).to.include('--frob').and.to.include('usage: npm run dependents');
+  });
+
+  it('should exit 1 when a value flag has no value', function () {
+    const r = spawn([SCRIPT, '--tgz']);
+    expect(r.status).to.equal(1);
+    expect(r.stderr).to.include('--tgz needs a value');
+  });
+
+  it('should exit 1 naming the known entries for an unknown --only', function () {
+    const r = spawn([SCRIPT, '--only', 'nope']);
+    expect(r.status).to.equal(1);
+    expect(r.stderr).to.include('nope').and.to.include('start-server-and-test');
+  });
+
+  it('should exit 1 asking for npm run when npm_execpath is missing', function () {
+    const env = Object.assign({}, process.env);
+    delete env.npm_execpath;
+    const r = spawn([SCRIPT, '--only', 'start-server-and-test'], env);
+    expect(r.status).to.equal(1);
+    expect(r.stderr).to.include('npm run dependents');
+  });
+});
+
+describe('dependents: package', function () {
+  this.timeout(30000);
+
+  it('should keep the dependents tooling out of the published package', function () {
+    needsNpm.call(this);
+    const r = npmRun(['pack', '--dry-run', '--json', '--ignore-scripts']);
+    expect(r.status, r.stderr).to.equal(0);
+    const paths = JSON.parse(r.stdout)[0].files.map((f) => f.path);
+    expect(paths.filter((p) => p.startsWith('scripts/') || p.startsWith('test/'))).to.eql([]);
+  });
+});
+
 describe('dependents: cleanup', function () {
   const temp = require('temp');
   temp.track();
