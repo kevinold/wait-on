@@ -679,6 +679,17 @@ describe('Fetch bad-list ports (#104)', function () {
     const opts = { resources: [`http://localhost:${port}/`], validateStatus: (status) => status < 400, timeout: 800 };
     expect(await outcome(opts)).to.match(/Timed out/);
   });
+
+  // fetch followed 20 redirects and only failed on a 21st.
+  it('should succeed when the final 2xx comes after exactly 20 redirects', async function () {
+    const port = await httpTarget((req, res) => {
+      const hop = Number(req.url.slice(1)) || 0;
+      if (hop === 20) return res.end('ok');
+      res.writeHead(302, { Location: `/${hop + 1}` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+  });
 });
 
 // Self-checks for the shared test helpers (KTD6, KTD8).

@@ -533,6 +533,18 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn redirect_chain_of_exactly_20_hops_is_ready() {
+        let hop = format!("HTTP/1.1 302 Found\r\nLocation: /r\r\nContent-Length: 0\r\n{CLOSE}\r\n");
+        let mut script: Vec<Reply> = (0..20).map(|_| reply(&hop)).collect();
+        script.push(reply(OK));
+        let (base, _rx) = serve(script);
+        let out = checker(base, "GET", true, Some(2000))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(out.ok, "{out:?}");
+    }
+
     fn closed_port() -> u16 {
         TcpListener::bind("127.0.0.1:0")
             .unwrap()
