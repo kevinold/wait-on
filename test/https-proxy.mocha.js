@@ -690,6 +690,18 @@ describe('Fetch bad-list ports (#104)', function () {
     });
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
   });
+
+  // fetch cancelled a rejected body at once; waiting for a non-2xx body that never ends
+  // would hold the only poll slot (simultaneous: 1, no httpTimeout) until the timeout.
+  it('should succeed when an earlier non-2xx GET response never ends its body', async function () {
+    const healthyAt = Date.now() + 500;
+    const port = await httpTarget((req, res) => {
+      if (Date.now() >= healthyAt) return res.end('ok');
+      res.writeHead(503);
+      res.write('x'); // never ended
+    });
+    expect(await outcome({ resources: [`http-get://localhost:${port}/`], simultaneous: 1 })).to.equal('resolved');
+  });
 });
 
 // Self-checks for the shared test helpers (KTD6, KTD8).
