@@ -24,10 +24,12 @@ The addon built for the current machine at `prebuilds/<host>/wait-on.node` by `n
 ## HTTP checks
 
 ### HTTP probe
-The check an `http:`/`https:` (HEAD) or `http-get:`/`https-get:` (GET) resource runs on each poll. The JS engine uses undici's `dispatcher.request`, not `fetch`; the Rust engine uses reqwest.
+The check an `http:`/`https:` (HEAD) or `http-get:`/`https-get:` (GET) resource runs on each poll. The JS engine uses undici's request API, not `fetch`; the Rust engine uses reqwest.
+
+Both engines keep fetch's behavior: they follow up to twenty redirects to a final response and fail on one more, and they drop a rejected response's body at once instead of waiting for it to end, so a body that never ends cannot hold the poll.
 
 ### Fetch bad-port list
-The WHATWG Fetch list of ports (e.g. 5060, 5061, 6000, 6665-6669, 10080) that any `fetch`, undici's included, refuses before connecting. An HTTP probe must reach them (#104, upstream #260).
+The WHATWG Fetch list of ports (e.g. 5060, 5061, 6000, 6665-6669, 10080) that any `fetch`, undici's included, refuses before connecting. An HTTP probe must reach them. Tests listen on the first free port from the list, never a fixed one, because other software often holds one of them.
 
 ## Verification
 
