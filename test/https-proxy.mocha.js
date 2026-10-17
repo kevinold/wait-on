@@ -702,6 +702,23 @@ describe('Fetch bad-list ports (#104)', function () {
     });
     expect(await outcome({ resources: [`http-get://localhost:${port}/`], simultaneous: 1 })).to.equal('resolved');
   });
+
+  // fetch dropped Authorization on a cross-origin redirect; the redirect interceptor must too.
+  it('should not send opts.auth to a different origin after a redirect', async function () {
+    const seen = {};
+    const other = await httpTarget((req, res) => {
+      seen.other = req.headers.authorization;
+      res.end('ok');
+    });
+    const port = await httpTarget((req, res) => {
+      seen.first = req.headers.authorization;
+      res.writeHead(302, { Location: `http://localhost:${other}/` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`], auth: { username: 'u', password: 'p' } })).to.equal('resolved');
+    expect(seen.first).to.equal('Basic ' + Buffer.from('u:p').toString('base64'));
+    expect(seen).to.have.property('other', undefined);
+  });
 });
 
 // Self-checks for the shared test helpers (KTD6, KTD8).
