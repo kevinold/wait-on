@@ -14,6 +14,7 @@ const path = require('path');
 const tlsFixture = require('./helpers/tls-fixture');
 const stubProxy = require('./helpers/stub-proxy');
 const { withEnv } = require('./helpers/engine-env');
+const { FETCH_BAD_PORTS, listenOnBadPort } = require('./helpers/cli-conformance');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -564,7 +565,6 @@ describe('plain http auth, headers and validateStatus parity', function () {
 // must reach them.
 describe('Fetch bad-list ports (#104)', function () {
   this.timeout(6000);
-  const BAD_PORT = 6000;
   let fx;
   let proxy;
 
@@ -581,18 +581,11 @@ describe('Fetch bad-list ports (#104)', function () {
     await new Promise((resolve) => closeServers(resolve));
   });
 
-  // Listen on the bad-list port; skip (not fail) when another process holds it.
-  async function listenBadPort(ctx, server, host = '127.0.0.1') {
-    try {
-      await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(BAD_PORT, host, resolve);
-      });
-    } catch (err) {
-      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') ctx.skip();
-      throw err;
-    }
-    servers.push(server);
+  // Listen on the first free bad-list port; badUrl follows it.
+  let badPort;
+  async function listenBadPort(server, host) {
+    servers.push(await listenOnBadPort(server, host));
+    badPort = server.address().port;
     return server;
   }
   const countingTarget = (handler = (req, res) => res.end('ok')) => {
@@ -600,30 +593,30 @@ describe('Fetch bad-list ports (#104)', function () {
     server.hits = 0;
     return server;
   };
-  const badUrl = `http://127.0.0.1:${BAD_PORT}/`;
+  const badUrl = () => `http://127.0.0.1:${badPort}/`;
 
   it('should succeed when an http HEAD resource listens on a bad-list port', async function () {
-    const target = await listenBadPort(this, countingTarget());
-    expect(await outcome({ resources: [badUrl] })).to.equal('resolved');
+    const target = await listenBadPort(countingTarget());
+    expect(await outcome({ resources: [badUrl()] })).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should succeed when an http-get resource listens on a bad-list port', async function () {
-    const target = await listenBadPort(this, countingTarget());
-    expect(await outcome({ resources: [`http-get://127.0.0.1:${BAD_PORT}/`] })).to.equal('resolved');
+    const target = await listenBadPort(countingTarget());
+    expect(await outcome({ resources: [`http-get://127.0.0.1:${badPort}/`] })).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should succeed when an https resource with ca and strictSSL listens on a bad-list port', async function () {
     if (!fx) this.skip(); // openssl not available
-    await listenBadPort(this, https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end('ok')), 'localhost');
-    expect(await outcome({ resources: [`https://localhost:${BAD_PORT}/`], strictSSL: true, ca: fx.cert })).to.equal('resolved');
+    await listenBadPort(https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end('ok')), 'localhost');
+    expect(await outcome({ resources: [`https://localhost:${badPort}/`], strictSSL: true, ca: fx.cert })).to.equal('resolved');
   });
 
   it('should follow a redirect onto a bad-list port when followRedirect is true', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     const port = await httpTarget((req, res) => {
-      res.writeHead(302, { Location: badUrl });
+      res.writeHead(302, { Location: badUrl() });
       res.end();
     });
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
@@ -631,29 +624,29 @@ describe('Fetch bad-list ports (#104)', function () {
   });
 
   it('should hand a 3xx from a bad-list port to validateStatus when followRedirect is false', async function () {
-    const target = await listenBadPort(this, countingTarget((req, res) => {
+    const target = await listenBadPort(countingTarget((req, res) => {
       res.writeHead(302, { Location: '/elsewhere' });
       res.end();
     }));
-    const opts = { resources: [badUrl], followRedirect: false, validateStatus: (status) => status === 302 };
+    const opts = { resources: [badUrl()], followRedirect: false, validateStatus: (status) => status === 302 };
     expect(await outcome(opts)).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should route a bad-list port target through an explicit proxy object', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     proxy = await stubProxy.start();
     const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port), protocol: 'http' };
-    expect(await outcome({ resources: [badUrl], proxy: proxyObj })).to.equal('resolved');
+    expect(await outcome({ resources: [badUrl()], proxy: proxyObj })).to.equal('resolved');
     expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
     expect(target.hits).to.be.above(0);
   });
 
   it('should route a bad-list port target through HTTP_PROXY from the env', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     proxy = await stubProxy.start();
     const vars = { HTTP_PROXY: proxy.url, http_proxy: proxy.url };
-    expect(await outcome({ resources: [badUrl] }, { vars })).to.equal('resolved');
+    expect(await outcome({ resources: [badUrl()] }, { vars })).to.equal('resolved');
     expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
     expect(target.hits).to.be.above(0);
   });
@@ -716,6 +709,27 @@ describe('test helpers: tls fixture and stub proxy', function () {
     it('should encrypt the key so it opens only with the passphrase', function () {
       expect(crypto.createPrivateKey({ key: fx.encryptedKey, passphrase: fx.passphrase }).asymmetricKeyType).to.equal('ec');
       expect(() => crypto.createPrivateKey(fx.encryptedKey)).to.throw();
+    });
+  });
+
+  describe('first free bad-list port', function () {
+    afterEach(function (done) {
+      closeServers(done);
+    });
+
+    it('should listen on a later bad-list port when the first free one is held', async function () {
+      const a = await listenOnBadPort(http.createServer());
+      servers.push(a);
+      const b = await listenOnBadPort(http.createServer());
+      servers.push(b);
+      expect(FETCH_BAD_PORTS).to.include(b.address().port);
+      expect(b.address().port).to.not.equal(a.address().port);
+    });
+
+    it('should rethrow a listen error that is neither EADDRINUSE nor EACCES', async function () {
+      let err;
+      await listenOnBadPort(http.createServer(), '192.0.2.1').catch((e) => (err = e));
+      expect(err).to.have.property('code', 'EADDRNOTAVAIL');
     });
   });
 
