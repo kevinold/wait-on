@@ -22,7 +22,7 @@ pub struct Entry {
     pub subdir: String,
     /// `install` (`npm install --no-save <tgz>`) or `overrides` (root `overrides` + install).
     pub swap: String,
-    /// Install and swap may run lifecycle scripts (Chromium download for jest-puppeteer).
+    /// Install and swap may run lifecycle scripts.
     pub scripts: bool,
     /// Node `process.platform` names this entry runs on; empty means every OS.
     pub os: Vec<String>,
@@ -817,7 +817,9 @@ mod tests {
         assert!(!sst.optional && sst.os.is_empty() && !sst.scripts);
         assert_eq!(sst.swap, "install");
         assert_eq!(jds.name, "jest-dev-server");
-        assert!(jds.optional && jds.scripts);
+        // Scripts off: Chrome comes only from the explicit build step. Puppeteer's postinstall,
+        // which some npm versions run and others block, can leave a half-extracted Chrome.
+        assert!(jds.optional && !jds.scripts);
         assert_eq!(jds.os, ["linux", "darwin"]);
         assert_eq!(jds.swap, "overrides");
         assert_eq!(jds.subdir, "packages/jest-dev-server");
@@ -872,8 +874,10 @@ mod tests {
 
     #[test]
     fn install_ignores_scripts_unless_the_entry_allows_them() {
-        let e = entries();
+        let mut e = entries();
         assert_eq!(install_args(&e[0]), ["ci", "--ignore-scripts"]);
+        assert_eq!(install_args(&e[1]), ["ci", "--ignore-scripts"]);
+        e[1].scripts = true;
         assert_eq!(install_args(&e[1]), ["ci"]);
     }
 
@@ -893,13 +897,16 @@ mod tests {
 
     #[test]
     fn overrides_swap_points_the_root_override_at_the_tarball_then_installs() {
-        let plan = swap_plan(&entries()[1], Path::new("/p/wait-on.tgz"));
+        let mut jds = entries().remove(1);
+        let set = vec!["pkg", "set", "overrides.wait-on=file:/p/wait-on.tgz"];
         assert_eq!(
-            plan,
-            [
-                vec!["pkg", "set", "overrides.wait-on=file:/p/wait-on.tgz"],
-                vec!["install"]
-            ]
+            swap_plan(&jds, Path::new("/p/wait-on.tgz")),
+            [set.clone(), vec!["install", "--ignore-scripts"]]
+        );
+        jds.scripts = true;
+        assert_eq!(
+            swap_plan(&jds, Path::new("/p/wait-on.tgz")),
+            [set, vec!["install"]]
         );
     }
 }
