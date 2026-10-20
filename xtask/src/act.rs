@@ -77,6 +77,16 @@ pub fn act_args(opts: &Options, artifacts: &Path) -> Vec<String> {
     args
 }
 
+/// act copies the checkout into its container; a worktree's `.git` file points at a host
+/// path that copy lacks, so git-reading steps (the commit-msg hook test) fail there.
+pub fn worktree_note(git_is_file: bool, extra: &[String]) -> Option<String> {
+    (git_is_file && !extra.iter().any(|a| a == "-C" || a == "--directory")).then(|| {
+        "note: this checkout is a git worktree; act's copy has no git dir, so git-reading \
+         steps fail. Run from a clone, or pass -- -C <clone>."
+            .into()
+    })
+}
+
 pub fn run(args: &[String]) -> i32 {
     host::exit_code(act(args))
 }
@@ -86,6 +96,9 @@ fn act(args: &[String]) -> Result<i32, String> {
     if let Some(reason) = linux::skip_reason(linux::docker_reachable()) {
         eprintln!("{reason}");
         return Ok(0);
+    }
+    if let Some(note) = worktree_note(host::repo_root().join(".git").is_file(), &opts.extra) {
+        eprintln!("{note}");
     }
     let artifacts = package::fresh_temp_dir("act-artifacts")?;
     let status = std::process::Command::new("act")
@@ -177,6 +190,15 @@ mod tests {
                 "/old",
             ])
         );
+    }
+
+    #[test]
+    fn worktree_note_only_for_a_worktree_without_another_directory() {
+        let note = worktree_note(true, &[]).expect("a note");
+        assert!(note.contains("git worktree"), "{note}");
+        assert!(note.contains("-- -C <clone>"), "{note}");
+        assert_eq!(worktree_note(false, &[]), None);
+        assert_eq!(worktree_note(true, &strings(&["-C", "/clone"])), None);
     }
 
     #[test]

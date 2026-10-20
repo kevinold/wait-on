@@ -12,9 +12,9 @@ pub const IMAGE: &str = "wait-on-linux";
 /// GHA's `ubuntu-latest` arch; Puppeteer also ships no linux-arm64 Chrome.
 const PLATFORM: &str = "linux/amd64";
 
-/// KTD2/KTD3a: trixie for the gnu addon's GLIBC 2.39+ floor; npm pinned below 11.19, whose
-/// `allowScripts` gate blocks the install scripts a `scripts: true` dependent needs.
-/// `CARGO_HOME` stays in the image (its `bin/` holds the rustup proxies).
+/// KTD2/KTD3a: trixie for the gnu addon's GLIBC 2.39+ floor; npm pinned so runs repeat (its
+/// `allowScripts` gate is lifted in `run_args`). `CARGO_HOME` stays in the image (its `bin/`
+/// holds the rustup proxies).
 pub fn dockerfile() -> String {
     [
         "FROM node:24-trixie",
@@ -41,7 +41,15 @@ pub fn run_args(root: &Path, command: &[String]) -> Vec<String> {
     let mut args = strings(&["run", "--rm", "--platform", PLATFORM]);
     // KTD3b: the bridge network has no non-loopback IPv6, so AI_ADDRCONFIG drops ::1 and
     // `localhost` misses servers bound to ::1.
-    args.extend(strings(&["--network", "host", "-v"]));
+    args.extend(strings(&["--network", "host"]));
+    // npm 11's `allowScripts` gate skips every install script not approved by name, so a
+    // `scripts: true` dependent (puppeteer, nx, @swc/core) would install without them.
+    // `scripts: false` entries still pass `--ignore-scripts`.
+    args.extend(strings(&[
+        "-e",
+        "npm_config_dangerously_allow_all_scripts=true",
+        "-v",
+    ]));
     args.push(format!("{}:/src:ro", root.to_string_lossy()));
     for volume in [
         "wait-on-linux-target:/work/target",
@@ -131,6 +139,10 @@ mod tests {
         assert_eq!(&args[..2], &strings(&["run", "--rm"])[..]);
         assert!(at("--platform", "linux/amd64"), "{args:?}");
         assert!(at("--network", "host"), "{args:?}");
+        assert!(
+            at("-e", "npm_config_dangerously_allow_all_scripts=true"),
+            "{args:?}"
+        );
         assert!(at("-v", "/repo:/src:ro"), "{args:?}");
         assert!(at("-w", "/work"), "{args:?}");
         for volume in [
