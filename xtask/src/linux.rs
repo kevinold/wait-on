@@ -12,8 +12,7 @@ pub const IMAGE: &str = "wait-on-linux";
 /// GHA's `ubuntu-latest` arch; Puppeteer also ships no linux-arm64 Chrome.
 const PLATFORM: &str = "linux/amd64";
 
-/// KTD2/KTD3a: trixie for the gnu addon's GLIBC 2.39+ floor; npm pinned so runs repeat (its
-/// `allowScripts` gate is lifted in `run_args`). `CARGO_HOME` stays in the image (its `bin/`
+/// trixie for the gnu addon's GLIBC 2.39+ floor. `CARGO_HOME` stays in the image (its `bin/`
 /// holds the rustup proxies).
 pub fn dockerfile() -> String {
     [
@@ -32,14 +31,14 @@ pub fn build_args(context: &Path) -> Vec<String> {
 }
 
 /// Copy the read-only checkout into the container's own tree, minus host build state, then
-/// install, build the Linux addon and exec the command with its words untouched (KTD3).
+/// install, build the Linux addon and exec the command with its words untouched.
 const SETUP: &str = "tar -C /src --exclude=./.git --exclude=./.claude --exclude=./node_modules \
 --exclude=./target --exclude=./prebuilds -cf - . | tar -C /work -xf - \
 && rustup toolchain install && npm ci --engine-strict && npm run build:napi && exec \"$@\"";
 
 pub fn run_args(root: &Path, command: &[String]) -> Vec<String> {
     let mut args = strings(&["run", "--rm", "--platform", PLATFORM]);
-    // KTD3b: the bridge network has no non-loopback IPv6, so AI_ADDRCONFIG drops ::1 and
+    // The bridge network has no non-loopback IPv6, so AI_ADDRCONFIG drops ::1 and
     // `localhost` misses servers bound to ::1.
     args.extend(strings(&["--network", "host"]));
     // npm 11's `allowScripts` gate skips every install script not approved by name, so a
@@ -64,7 +63,6 @@ pub fn run_args(root: &Path, command: &[String]) -> Vec<String> {
     args
 }
 
-/// KTD5: these are local tools, so no engine is a skip, not a failure.
 pub fn skip_reason(reachable: bool) -> Option<String> {
     (!reachable).then(|| "docker engine not reachable (`docker info` failed): skipping".into())
 }

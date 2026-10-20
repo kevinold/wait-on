@@ -2,7 +2,8 @@
 //! run a workflow's ubuntu jobs locally with nektos/act (pinned in mise.toml), a pinned
 //! runner image and a fixed container architecture. Skips when no Docker engine is reachable.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::{host, linux, package};
 
@@ -47,7 +48,7 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
     Ok(opts)
 }
 
-/// KTD4: both ubuntu labels the workflows use map to one image; act skips every row whose
+/// Both ubuntu labels the workflows use map to one image; act skips every row whose
 /// `runs-on` is unmapped (windows, macos, arm). The artifact server is always on because the
 /// PR `napi` row uploads its prebuild.
 pub fn act_args(opts: &Options, artifacts: &Path) -> Vec<String> {
@@ -122,8 +123,8 @@ fn act(args: &[String]) -> Result<i32, String> {
         eprintln!("{note}");
     }
     let artifacts = package::fresh_temp_dir("act-artifacts")?;
-    let dir = directory(&opts.extra).map_or(root.clone(), std::path::PathBuf::from);
-    let head = std::process::Command::new("git")
+    let dir = directory(&opts.extra).map_or(root.clone(), PathBuf::from);
+    let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&dir)
         .output()
@@ -135,9 +136,9 @@ fn act(args: &[String]) -> Result<i32, String> {
         opts.extra
             .extend(["-e".into(), path.to_string_lossy().to_string()]);
     }
-    let status = std::process::Command::new("act")
+    let status = Command::new("act")
         .args(act_args(&opts, &artifacts))
-        .current_dir(host::repo_root())
+        .current_dir(&root)
         .status()
         .map_err(|e| format!("act: {e} (install it with `mise install`; mise.toml pins it)"))?;
     Ok(status.code().unwrap_or(1))
