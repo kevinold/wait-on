@@ -35,10 +35,10 @@
     "tag": "v11.0.0",
     "subdir": "packages/jest-dev-server",
     "swap": "overrides",
-    "scripts": true,
-    "os": ["linux"],
+    "scripts": false,
+    "os": ["linux", "darwin"],
     "optional": true,
-    "build": ["npm run build"],
-    "run": ["node node_modules/jest/bin/jest.js --runInBand packages/jest-dev-server"]
+    "build": ["node node_modules/puppeteer/install.mjs", "npm run build"],
+    "run": ["npm test -- packages/jest-environment-puppeteer packages/expect-puppeteer"]
   }
 ]

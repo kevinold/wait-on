@@ -22,7 +22,7 @@ pub struct Entry {
     pub subdir: String,
     /// `install` (`npm install --no-save <tgz>`) or `overrides` (root `overrides` + install).
     pub swap: String,
-    /// Install and swap may run lifecycle scripts (Chromium download for jest-puppeteer).
+    /// Install and swap may run lifecycle scripts.
     pub scripts: bool,
     /// Node `process.platform` names this entry runs on; empty means every OS.
     pub os: Vec<String>,
@@ -682,6 +682,10 @@ mod tests {
         );
         assert_eq!(
             names(&select(&e, &opt, "darwin").unwrap()),
+            ["start-server-and-test", "jest-dev-server"]
+        );
+        assert_eq!(
+            names(&select(&e, &opt, "win32").unwrap()),
             ["start-server-and-test"]
         );
     }
@@ -710,9 +714,9 @@ mod tests {
             only: Some("jest-dev-server".into()),
             ..Options::default()
         };
-        let err = select(&entries(), &only, "darwin").unwrap_err();
+        let err = select(&entries(), &only, "win32").unwrap_err();
         assert!(
-            err.contains("jest-dev-server") && err.contains("linux"),
+            err.contains("jest-dev-server") && err.contains("linux, darwin"),
             "{err}"
         );
     }
@@ -726,6 +730,10 @@ mod tests {
         assert_eq!(
             node_args("node node_modules/mocha/bin/mocha.js src/*-spec.js", "/n").unwrap(),
             ["node_modules/mocha/bin/mocha.js", "src/*-spec.js"]
+        );
+        assert_eq!(
+            node_args("npm test -- packages/a packages/b", "/n").unwrap(),
+            ["/n", "test", "--", "packages/a", "packages/b"]
         );
         assert!(node_args("curl x", "/n").unwrap_err().contains("curl"));
     }
@@ -801,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_has_the_anchor_first_and_jest_dev_server_optional_on_linux() {
+    fn manifest_has_the_anchor_first_and_jest_dev_server_optional_on_linux_and_darwin() {
         let e = entries();
         assert_eq!(e.len(), 2);
         let (sst, jds) = (&e[0], &e[1]);
@@ -809,10 +817,23 @@ mod tests {
         assert!(!sst.optional && sst.os.is_empty() && !sst.scripts);
         assert_eq!(sst.swap, "install");
         assert_eq!(jds.name, "jest-dev-server");
-        assert!(jds.optional && jds.scripts);
-        assert_eq!(jds.os, vec!["linux".to_string()]);
+        // Scripts off: Chrome comes only from the explicit build step. Puppeteer's postinstall,
+        // which some npm versions run and others block, can leave a half-extracted Chrome.
+        assert!(jds.optional && !jds.scripts);
+        assert_eq!(jds.os, ["linux", "darwin"]);
         assert_eq!(jds.swap, "overrides");
-        assert_eq!(jds.build, vec!["npm run build".to_string()]);
+        assert_eq!(jds.subdir, "packages/jest-dev-server");
+        assert_eq!(
+            jds.build,
+            ["node node_modules/puppeteer/install.mjs", "npm run build"]
+        );
+        assert_eq!(
+            jds.run,
+            ["npm test -- packages/jest-environment-puppeteer packages/expect-puppeteer"]
+        );
+        for cmd in e.iter().flat_map(|e| e.build.iter().chain(&e.run)) {
+            assert!(node_args(cmd, "/n").is_ok(), "{cmd}");
+        }
     }
 
     #[test]
@@ -853,8 +874,10 @@ mod tests {
 
     #[test]
     fn install_ignores_scripts_unless_the_entry_allows_them() {
-        let e = entries();
+        let mut e = entries();
         assert_eq!(install_args(&e[0]), ["ci", "--ignore-scripts"]);
+        assert_eq!(install_args(&e[1]), ["ci", "--ignore-scripts"]);
+        e[1].scripts = true;
         assert_eq!(install_args(&e[1]), ["ci"]);
     }
 
@@ -874,13 +897,16 @@ mod tests {
 
     #[test]
     fn overrides_swap_points_the_root_override_at_the_tarball_then_installs() {
-        let plan = swap_plan(&entries()[1], Path::new("/p/wait-on.tgz"));
+        let mut jds = entries().remove(1);
+        let set = vec!["pkg", "set", "overrides.wait-on=file:/p/wait-on.tgz"];
         assert_eq!(
-            plan,
-            [
-                vec!["pkg", "set", "overrides.wait-on=file:/p/wait-on.tgz"],
-                vec!["install"]
-            ]
+            swap_plan(&jds, Path::new("/p/wait-on.tgz")),
+            [set.clone(), vec!["install", "--ignore-scripts"]]
+        );
+        jds.scripts = true;
+        assert_eq!(
+            swap_plan(&jds, Path::new("/p/wait-on.tgz")),
+            [set, vec!["install"]]
         );
     }
 }
