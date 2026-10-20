@@ -33,6 +33,31 @@ No repo test used a bad-list port.
 - **The candidate list is short.** Only start-server-and-test (about 2.4M weekly downloads) and
   jest-dev-server (about 340k; `@mozillasecurity/jest-dev-server` is a republish) are viable
   published dependents. nx, cypress, playwright and storybook do not depend on wait-on.
+- **jest-dev-server: run the suites that call it, not its own package.** In
+  `argos-ci/jest-puppeteer`, `packages/jest-dev-server` has no tests, so jest on it prints
+  "No tests found" and a green row proves nothing. Run
+  `npm test -- packages/jest-environment-puppeteer packages/expect-puppeteer` from the clone root
+  (through npm, so `node_modules/.bin` is on `PATH`). Their global setup calls jest-dev-server
+  `setup`, which calls `waitOn({ resources: ["tcp:0.0.0.0:4444"], timeout })` for the root
+  `jest-puppeteer.config.js` server. jest-dev-server detects a timeout by the message prefix
+  "Timed out waiting for", so both engines must keep that text; these suites only exercise the
+  happy path.
+- **Install Puppeteer's Chrome as a build step, with scripts off.** npm 11.16 blocks puppeteer's
+  postinstall, but npm 11.13 runs it, and under emulation it left a half-extracted Chrome that
+  `install.mjs` then refused ("browser folder exists but the executable is missing"). With
+  `scripts: false` the entry builds with `node node_modules/puppeteer/install.mjs` before
+  `npm run build`, the one Chrome download on every npm.
+- **The `overrides` swap needs npm 11.16+.** After `npm pkg set overrides.wait-on=file:<tgz>`,
+  npm 11.13's `npm install` reports "up to date" and keeps the locked nested `wait-on@8.0.1`;
+  npm 11.16 swaps it. The harness's `npm ls` check fails the run loudly, so no wrong result
+  slips through, but the run is wasted.
+- **Linux on Apple Silicon.** Chrome for Testing has no linux-arm64 build, and in a
+  `linux/amd64` container under Rosetta its zip extraction stopped part way twice. Run a native
+  arm64 container with Debian's `chromium` and `PUPPETEER_SKIP_DOWNLOAD=true`,
+  `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`; the harness passes the parent env through.
+- **Mind port 4444.** The suites' config uses `usedPortAction: "kill"`, so a run kills whatever
+  already listens on 4444. jest-dev-server's `launchTimeout` is 4000 ms; a cold, loaded host can
+  hit "Server has taken more than 4000ms to start". Rerun once before calling it a regression.
 - **Prove the swap and the route.** A rust-strict run counts only when some process dlopened the
   swapped addon and none loaded `lib/engine-js.js` (the proof preload), judged over all of that
   run's records.
