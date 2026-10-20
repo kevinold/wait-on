@@ -69,6 +69,9 @@ pub fn act_args(opts: &Options, artifacts: &Path) -> Vec<String> {
         "os:ubuntu-latest".into(),
         "--matrix".into(),
         "os:ubuntu-24.04".into(),
+        // act keeps a failed job's container running; on the host network its leftover
+        // test servers then hold fixed ports (3000) for the next run.
+        "--rm".into(),
     ];
     if let Some(job) = &opts.job {
         args.extend(["-j".into(), job.clone()]);
@@ -215,6 +218,7 @@ mod tests {
                 "os:ubuntu-latest",
                 "--matrix",
                 "os:ubuntu-24.04",
+                "--rm",
                 "-j",
                 "rust",
                 "-C",
