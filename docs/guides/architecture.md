@@ -136,7 +136,8 @@ The bare FFI call is about 14 ns, and the `validateStatus` threadsafe round trip
 
 On the Rust engine, beyond the per-check differences listed with each check above:
 
-- Default request headers: the JS engine sends `accept: */*` and `user-agent: undici` (what fetch sent, kept when it moved to `dispatcher.request`, #104); reqwest sends `accept: */*` only.
+- Default request headers: both engines send `accept: */*` and `accept-language: *` (what fetch sent, kept when the JS engine moved to `dispatcher.request`, #104, #111); the JS engine also sends `user-agent: undici`, and reqwest sends no user-agent. A caller header of the same name wins on both. Neither sends fetch's `sec-fetch-mode`.
+- Request target: both send the URL's path and query as written, keeping an empty `?` (`/health?`) and dropping any `#fragment`.
 - Redirect hop limit: 20 on both, and the 21st hop fails the check (reqwest `Policy::limited(20)`; undici `interceptors.redirect` with `maxRedirections: 21` and `throwOnMaxRedirect`, since undici counts the final response against the cap). Both follow a `300` with `Location`.
 - TLS: rustls negotiates TLS 1.2/1.3 with ECDHE AEAD suites only. A legacy https target offering only RSA key exchange or DHE suites handshakes under Node/OpenSSL (with `strictSSL: false`) but not under Rust, and polls until `timeout` (under `reverse` it reads as gone on the first poll).
 - `httpTimeout` above 2^31-1 ms: Node's `AbortSignal.timeout` overflows (every check fails); Rust clamps to 2^32-1 ms.

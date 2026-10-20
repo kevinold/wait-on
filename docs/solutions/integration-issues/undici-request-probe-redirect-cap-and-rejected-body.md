@@ -39,14 +39,14 @@ PR #110 (issue #104) moved the JS engine's HTTP probe from undici `fetch` to `di
 
 ## Solution
 
-`lib/engine-js.js:212-214`:
+`lib/engine-js.js:214-216`:
 
 ```js
 // 21: undici counts the final response against maxRedirections, fetch does not.
 ? dispatcher.compose(interceptors.redirect({ maxRedirections: 21, throwOnMaxRedirect: true }))
 ```
 
-`lib/engine-js.js:262`, in the `finally` that runs whenever the body was not consumed:
+`lib/engine-js.js:265`, in the `finally` that runs whenever the body was not consumed:
 
 ```js
 if (!consumed) body.on('error', () => {}).destroy();
@@ -68,3 +68,4 @@ Bad-port tests: `test/helpers/cli-conformance.js:94-96` now holds the one `FETCH
 - The cross-origin auth test passes on its first run, because the interceptor already strips the header. It goes red only when you make `shouldRemoveHeader` in undici's `redirect-handler.js` return `false`. Prove a guard test that way, then restore `node_modules`.
 - Never listen on a fixed bad-list port in a test. Call `listenOnBadPort`.
 - When replacing `fetch` with a lower-level undici API, list everything fetch did for you, such as the redirect counting, body cancel, the default headers, and the userinfo refusal. Give each one a test at the `waitOn` front door.
+- A cross-model review of this swap found two more fetch defaults the first list missed. `pathname + search` drops an explicitly empty query, because `new URL('http://h/health?').search` is `''` while fetch sent `/health?`. The path now comes from `href` after `origin`, minus any `#fragment` (`lib/engine-js.js:220`). fetch also added `accept-language: *` when the caller did not; both engines now send it (`lib/engine-js.js:210`, reqwest `default_headers` in `crates/wait-on-core/src/http.rs`). Tests: `should send the request path with an empty query...` and the default-headers test in `test/https-proxy.mocha.js`, `default_accept_language_yields_to_the_caller` in Rust, and the `features/api-http-options.feature` scenario. reqwest already kept the empty `?`.
