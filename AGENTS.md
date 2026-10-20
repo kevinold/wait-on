@@ -95,6 +95,12 @@ has syntax worth failing fast on.
   on the published wait-on, then on the packed package under `js` and `rust-strict`
   (`cargo xtask dependents`). See
   [`docs/guides/testing.md`](docs/guides/testing.md#dependents-harness).
+- `cargo xtask linux <cmd...>` — on demand, needs Docker: runs `<cmd>` in a pinned Linux
+  container over a read-only copy of the checkout, after `npm ci` and `build:napi`; e.g.
+  `cargo xtask linux npm run dependents -- --include-optional` for the Linux-only dependent.
+  `cargo xtask act [--event pull_request|push] [--job J] [--workflow W] [-- act args]` —
+  a workflow's ubuntu jobs locally with act (`mise install` pins it). Both skip without a
+  Docker engine. See [`docs/guides/testing.md`](docs/guides/testing.md#linux-and-act-runs).
 - Node engines floor is `>=22.19.0`.
 
 ## Conventions
