@@ -11,3 +11,5 @@ eslint.config.mjs
 .releaserc.json
 commitlint.config.js
 docs
+.multi-worker-pm.json
+.githooks

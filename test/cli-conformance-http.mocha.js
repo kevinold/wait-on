@@ -9,7 +9,7 @@
 const fs = require('fs');
 const http = require('http');
 const { expect } = require('chai');
-const { runCli, getFreePort, socketPathIn, tempDir, listening, T, APPEAR, FAST_OPTS } = require('./helpers/cli-conformance');
+const { runCli, getFreePort, socketPathIn, tempDir, listening, T, APPEAR, FAST_OPTS, expectElapsed } = require('./helpers/cli-conformance');
 
 describe('cli conformance: http(s) vectors (LT4b)', function () {
   const servers = [];
@@ -46,7 +46,7 @@ describe('cli conformance: http(s) vectors (LT4b)', function () {
       later(() => track(http.createServer(okHandler)).listen(port, '127.0.0.1'));
       const r = await runCli(['http://127.0.0.1:' + port + '/', 'http://127.0.0.1:' + port + '/foo'].concat(FAST_OPTS));
       expect(r.code, r.stderr).to.equal(0);
-      expect(r.elapsedMs).to.be.at.least(APPEAR - 150);
+      expectElapsed(r, APPEAR);
     });
 
     it('follows a redirect to a ready resource', async function () {
@@ -75,14 +75,14 @@ describe('cli conformance: http(s) vectors (LT4b)', function () {
       await listening(srv, port, '127.0.0.1');
       const r = await runCli(['http://127.0.0.1:' + port + '/'].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
 
     it('times out when an http resource is never available', async function () {
       const port = await getFreePort();
       const r = await runCli(['http://127.0.0.1:' + port + '/'].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
 
     it('times out when the server responds slower than --httpTimeout', async function () {
@@ -106,7 +106,7 @@ describe('cli conformance: http(s) vectors (LT4b)', function () {
       const port = await getFreePort();
       const r = await runCli(['http-get://127.0.0.1:' + port + '/'].concat(FAST_OPTS));
       expect(r.code).to.not.equal(0);
-      expect(r.elapsedMs).to.be.at.least(T * 0.5);
+      expectElapsed(r, T);
     });
   });
 

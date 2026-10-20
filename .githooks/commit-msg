@@ -1,0 +1,75 @@
+#!/bin/sh
+# Rejects commit messages that CI's commitlint (@commitlint/config-conventional) would reject.
+# POSIX sh + awk only, so it runs under git-for-Windows' sh too.
+# Enable once per clone: `cargo xtask hooks` (or `git config core.hooksPath .githooks`).
+# Rules: AGENTS.md "Commit messages". Never bypass with --no-verify.
+set -u
+
+# LC_ALL=C: bytes, not characters, so lengths and the subject-case test never depend on locale.
+LC_ALL=C awk '
+function fail(msg, rule) { printf "commit-msg: %s [%s]\n", msg, rule; bad = 1 }
+
+{ sub(/\r$/, "") }
+/^# -+ >8 -+$/ { exit }
+{ line[++n] = $0 }
+
+END {
+  # Header: first non-blank line, # lines included: -m/-F keep them and CI lints what is kept.
+  h = 1
+  while (h <= n && line[h] ~ /^[ \t]*$/) h++
+  while (n > h && line[n] ~ /^[ \t]*$/) n--
+  header = (h <= n) ? line[h] : ""
+
+  # @commitlint/is-ignored defaults.
+  if (header ~ /^Merge pull request/ || header ~ /^Merge .* into / || header ~ /^Merge branch / ||
+      header ~ /^Merge tag / || header ~ /^[Rr]evert / || header ~ /^[Rr]eapply / ||
+      header ~ /^(amend|fixup|squash)!/ || header ~ /^Merged .*(in|into) / ||
+      header ~ /^Merged PR .*: / || header ~ /^Merge remote-tracking branch/ ||
+      header ~ /^Automatic merge/ || header ~ /^Auto-merged .* into /)
+    exit 0
+
+  if (header != "" && (header ~ /^[ \t]/ || header ~ /[ \t]$/))
+    fail("header must not have leading or trailing whitespace", "header-trim")
+  if (length(header) > 100)
+    fail("header must not be longer than 100 characters, current length is " length(header), "header-max-length")
+
+  type = ""; subject = ""
+  if (match(header, /^[A-Za-z0-9_]*(\(.*\))?!?: /)) {
+    type = header; sub(/[(!:].*$/, "", type)
+    subject = substr(header, RLENGTH + 1)
+    sub(/[ \t]+$/, "", subject)
+  }
+  if (type == "") {
+    fail("type may not be empty (expected <type>[(<scope>)][!]: <subject>)", "type-empty")
+  } else {
+    if (type != tolower(type))
+      fail("type must be lower-case", "type-case")
+    if (type !~ /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)$/)
+      fail("type must be one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert", "type-enum")
+  }
+  if (subject == "") {
+    fail("subject may not be empty", "subject-empty")
+  } else {
+    # ponytail: any non-ASCII first byte is rejected because a byte test cannot tell É from é;
+    # stricter than commitlint, upgrade with a Unicode-aware check if it bites.
+    first = substr(subject, 1, 1)
+    if (first ~ /[A-Z]/ || first !~ /[ -~]/)
+      fail("subject must start lower-case (no sentence-case, start-case, pascal-case, upper-case)", "subject-case")
+    if (subject ~ /\.$/)
+      fail("subject may not end with full stop", "subject-full-stop")
+  }
+
+  # ponytail: an error here (a warning in config-conventional), and # lines count like any other line,
+  # so a -m/-F message is checked as CI sees it; git template comment lines are short.
+  if (n > h && line[h + 1] != "")
+    fail("body must have leading blank line", "body-leading-blank")
+  for (i = h + 1; i <= n; i++)
+    if (length(line[i]) > 100) {
+      fail("body line " (i - h) " is longer than 100 characters (" length(line[i]) "); put long logs in the PR body", "body-max-line-length")
+      break
+    }
+
+  if (bad) print "commit-msg: see AGENTS.md \"Commit messages\""
+  exit bad
+}
+' "$1" >&2

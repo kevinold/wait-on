@@ -321,6 +321,7 @@ If you have input or ideas or would like to get involved, you may:
 - contact me via twitter @jeffbski - <http://twitter.com/jeffbski>
 - open an issue on github to begin a discussion - <https://github.com/jeffbski/wait-on/issues>
 - fork the repo and send a pull request (ideally with tests) - <https://github.com/jeffbski/wait-on>
+- building, testing, and releasing (Node and Rust engines) - see the [developer guides](docs/guides/README.md); the experimental Rust engine is opt-in with `WAIT_ON_ENGINE=rust` and needs a built addon
 
 ## License
 

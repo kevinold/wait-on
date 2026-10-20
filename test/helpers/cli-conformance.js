@@ -90,13 +90,32 @@ function listening(server, ...listenArgs) {
 }
 
 // wait-on CLI timing options shared by every vector, sized so a vector's worst
-// case (spawn + timeout wait) stays well under mocha's 2000ms default - so no
-// runner-level per-test timeout override is needed and the tests stay portable.
+// case (spawn + timeout wait) stays under mocha's 2000ms default: T + late
+// (TOLERANCE_MS) = 1800 < 2000 - so no runner-level per-test timeout override is
+// needed and the tests stay portable. Raising `late` means raising a per-suite
+// this.timeout in both conformance suites, together.
 const T = 800; // -t timeout (ms)
 const I = 100; // -i poll interval (ms)
 const W = 100; // -w stability window (ms)
 const APPEAR = 250; // delay before a "later" resource is made available (ms)
 const FAST_OPTS = ['-t', String(T), '-i', String(I), '-w', String(W)];
+
+// The one timing tolerance for every conformance vector, both engines.
+// early: timer clamping only - elapsedMs starts before the child's own timers,
+// so a child never legitimately finishes before expectedMs. late: node startup +
+// module load (+ addon load under WAIT_ON_ENGINE=rust) on the slowest CI row.
+// Additive, not a percentage: the noise is startup, not proportional to the wait.
+const TOLERANCE_MS = Object.freeze({ early: 100, late: 1000 });
+
+// Assert a runCli result finished within [expectedMs - early, expectedMs + late].
+function expectElapsed(result, expectedMs) {
+  const min = expectedMs - TOLERANCE_MS.early;
+  const max = expectedMs + TOLERANCE_MS.late;
+  const { elapsedMs } = result;
+  if (!(elapsedMs >= min && elapsedMs <= max)) {
+    throw new Error(`elapsedMs ${elapsedMs} outside [${min}, ${max}] (expected ${expectedMs}ms, tolerance -${TOLERANCE_MS.early}/+${TOLERANCE_MS.late})`);
+  }
+}
 
 module.exports = {
   resolveCli,
@@ -109,5 +128,7 @@ module.exports = {
   I,
   W,
   APPEAR,
-  FAST_OPTS
+  FAST_OPTS,
+  TOLERANCE_MS,
+  expectElapsed
 };

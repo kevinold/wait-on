@@ -11,6 +11,7 @@
   "files": [
     "bin/",
     "lib/",
+    "prebuilds/",
     "exampleConfig.js",
     "index.d.ts"
   ],
@@ -24,16 +25,24 @@
   },
   "license": "MIT",
   "scripts": {
-    "lint": "eslint \"lib/**/*.js\" \"test/**/*.js\" \"bin/wait-on\"",
+    "bench:startup": "cargo xtask bench-startup",
+    "build:napi": "cargo xtask build-napi",
+    "contract": "cargo xtask contract",
+    "dependents": "cargo xtask dependents",
+    "ci:rs": "cargo vet --locked && cargo xtask ci && cargo xtask cov --exclude xtask --exclude wait-on-features --fail-under-lines 100 --fail-under-regions 100",
+    "lint": "eslint \"lib/**/*.js\" \"test/**/*.js\" \"benchmarks/**/*.js\" \"xtask/**/*.js\" \"features/**/*.js\" \"cucumber.js\" \"bin/wait-on\"",
     "test": "npm run lint && npm run test:types && npm run test:mocha",
     "test:coverage": "nyc npm run test:mocha",
     "test:mocha": "mocha --exit \"test/**/*.mocha.js\"",
-    "test:types": "tsc -p test/tsconfig.json"
+    "test:types": "tsc -p test/tsconfig.json",
+    "ci:rs:package": "cargo xtask package"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "devDependencies": {
+    "@cucumber/cucumber": "^13.2.1",
+    "@napi-rs/cli": "^3.10.5",
     "@types/node": "^26.6.3",
     "chai": "^6.2.2",
     "eslint": "^10.11.0",

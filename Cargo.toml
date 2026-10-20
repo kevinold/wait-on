@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/wait-on-core", "crates/wait-on-features", "crates/wait-on-napi", "xtask"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+publish = false
+
+# Size-tuned for the shipped addons (R23). panic stays at its default, unwind, so a Rust
+# panic rejects the waitOn promise instead of aborting the consumer's process;
+# xtask/tests/release_profile.rs pins it.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+opt-level = "z"

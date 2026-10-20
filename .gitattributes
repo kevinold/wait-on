@@ -1,0 +1,7 @@
+# JSON fixtures and baselines are compared byte for byte (xtask bench round-trip);
+# keep them LF on every checkout, including Windows autocrlf.
+*.json text eol=lf
+# The consumer contract's feature files and fixtures are compared or type-checked as text.
+*.feature text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf

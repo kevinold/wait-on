@@ -5,8 +5,20 @@ name: CI
 
 on:
   push:
-    branches: [ "master", "next", "*.x" ]
+    branches: [ "master", "next", "*.x", "spike-next-rs" ]
   pull_request:
+
+# Superseded PR runs are cancelled; pushes always run to completion.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Spike CI budget (operator, 2026-10-01): pull requests run one representative
+# row per job (ubuntu, Node 24, linux-x64-gnu addon; rust also on windows, where
+# platform-only bugs escaped twice) and skip `package`. Pushes (merges into
+# spike-next-rs, master, next, *.x) run the full matrix, so every merged lane is
+# still verified on every platform and the fork prerelease still carries every
+# target. Restore the full PR matrix before the spike PR leaves draft (L10).
 
 jobs:
   build:
@@ -15,8 +27,8 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        node-version: ['22.x', '24.x', '26.x']
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        node-version: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x","24.x","26.x"]') }}
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
     steps:
@@ -29,3 +41,108 @@ jobs:
     - run: npm ci --engine-strict
     - run: npm run build --if-present
     - run: npm test
+
+  # Rust engine jobs (spike-next-rs). Lanes change behavior only through the npm
+  # scripts these jobs call (`ci:rs`, `build:napi`, `ci:rs:package`); every
+  # Rust-specific step no-ops until Cargo.toml / rust-toolchain.toml exist.
+  # See docs/guides/ci.md.
+  rust:
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - name: Install Rust toolchain
+      if: hashFiles('rust-toolchain.toml') != ''
+      run: rustup toolchain install
+    - uses: Swatinem/rust-cache@v2
+      if: hashFiles('Cargo.toml') != ''
+    - uses: taiki-e/install-action@v2
+      if: hashFiles('Cargo.toml') != ''
+      with:
+        tool: cargo-deny,cargo-vet,cargo-llvm-cov
+    - run: npm ci --engine-strict
+    - run: npm run --if-present ci:rs
+
+  napi:
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","zig":false,"extra-args":""}]' || '[{"target":"aarch64-apple-darwin","os":"macos-14","zig":false,"extra-args":""},{"target":"x86_64-apple-darwin","os":"macos-14","zig":false,"extra-args":""},{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","zig":false,"extra-args":""},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04-arm","zig":false,"extra-args":""},{"target":"x86_64-unknown-linux-musl","os":"ubuntu-24.04","zig":true,"extra-args":"-x"},{"target":"aarch64-unknown-linux-musl","os":"ubuntu-24.04-arm","zig":true,"extra-args":"-x"},{"target":"x86_64-pc-windows-msvc","os":"windows-latest","zig":false,"extra-args":""},{"target":"aarch64-pc-windows-msvc","os":"windows-11-arm","zig":false,"extra-args":""}]') }}
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - name: Install Rust toolchain and target
+      if: hashFiles('rust-toolchain.toml') != ''
+      run: |
+        rustup toolchain install
+        rustup target add ${{ matrix.target }}
+    - uses: Swatinem/rust-cache@v2
+      if: hashFiles('Cargo.toml') != ''
+      with:
+        key: ${{ matrix.target }}
+    - uses: mlugg/setup-zig@v2
+      if: matrix.zig && hashFiles('Cargo.toml') != ''
+    - run: npm ci --engine-strict
+    - run: npm run --if-present build:napi -- --target ${{ matrix.target }} ${{ matrix.extra-args }}
+    - uses: actions/upload-artifact@v7
+      with:
+        name: prebuilds-${{ matrix.target }}
+        path: prebuilds/**
+        if-no-files-found: ignore
+
+  package:
+
+    # Push-only: packaging needs every target's prebuild (PRs build one).
+    if: github.event_name != 'pull_request'
+    needs: napi
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 24.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: prebuilds-*
+        path: prebuilds
+        merge-multiple: true
+    - run: npm ci --engine-strict
+    - run: npm run --if-present ci:rs:package
+    - uses: actions/upload-artifact@v7
+      with:
+        name: package
+        path: |
+          wait-on-*.tgz
+          SHA256SUMS
+        if-no-files-found: ignore
+
+  # Fork test prerelease. A reusable workflow in the same run, because
+  # workflow_run/workflow_dispatch only fire for files on the default branch.
+  prerelease:
+    needs: [build, rust, package]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/spike-next-rs' && github.repository == 'kevinold/wait-on'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/rs-prerelease.yml
