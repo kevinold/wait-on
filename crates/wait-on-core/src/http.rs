@@ -4,6 +4,7 @@ use std::future::Future;
 use std::sync::{Mutex, Once};
 use std::time::Duration;
 
+use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
 use reqwest::{Certificate, Client, ClientBuilder, Identity, Method, Proxy, redirect::Policy};
 use tokio::sync::watch;
 
@@ -70,6 +71,11 @@ impl HttpChecker {
         let base = || {
             let mut b = Client::builder()
                 .no_proxy()
+                // undici fetch's default; a caller Accept-Language replaces it.
+                .default_headers(HeaderMap::from_iter([(
+                    ACCEPT_LANGUAGE,
+                    HeaderValue::from_static("*"),
+                )]))
                 .redirect(if opts.follow_redirect {
                     Policy::limited(20) // undici fetch's hop limit
                 } else {
@@ -514,6 +520,34 @@ mod tests {
         assert!(head.starts_with("HEAD / "), "{head}");
         assert!(head.contains("x-custom: keep\r\n"), "{head}");
         assert!(head.contains("authorization: Basic dTpw\r\n"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn default_accept_language_yields_to_the_caller() {
+        let ok = format!("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n{CLOSE}\r\n");
+        let (base, rx) = serve(vec![reply(&ok), reply(&ok)]);
+        let head = |headers: Vec<(String, String)>| {
+            let c = HttpChecker::new(HttpOptions {
+                url: format!("{base}/health?"),
+                method: "HEAD".into(),
+                headers,
+                follow_redirect: true,
+                timeout_ms: Some(1000),
+                ..Default::default()
+            })
+            .unwrap();
+            let rx = &rx;
+            async move {
+                assert!(c.check(None::<NoValidate>).await.ok);
+                rx.recv_timeout(Duration::from_secs(2)).unwrap()
+            }
+        };
+        let plain = head(vec![]).await;
+        assert!(plain.starts_with("HEAD /health? "), "{plain}");
+        assert!(plain.contains("accept-language: *\r\n"), "{plain}");
+        let own = head(vec![("Accept-Language".into(), "en".into())]).await;
+        assert!(own.contains("accept-language: en\r\n"), "{own}");
+        assert!(!own.contains("accept-language: *"), "{own}");
     }
 
     #[tokio::test]

@@ -25,6 +25,17 @@ Feature: HTTP request options
     And the server saw the header "x-contract" as "yes"
 
   @kind:good
+  Scenario: the request keeps an empty query and sends the default accept-language
+    Given an HTTP server answering 200 that records requests to "/health?"
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
+    And the server saw the request path "/health?"
+    And the server saw the header "accept-language" as "*"
+
+  @kind:good
   Scenario: auth is sent as a Basic authorization header
     Given an HTTP server answering 200 that records requests
     When the consumer calls waitOn with:

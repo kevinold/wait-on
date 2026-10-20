@@ -657,17 +657,26 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(await outcome({ resources: [`http://user:pass@localhost:${port}/`], timeout: 600 }, { routed: false })).to.match(/Timed out/);
   });
 
-  it('should send default accept and user-agent headers, letting caller headers win', async function () {
+  it('should send default accept, accept-language and user-agent headers, letting caller headers win', async function () {
     const seen = [];
     const port = await httpTarget((req, res) => { seen.push(req.headers); res.end('ok'); });
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
-    expect(seen[0]).to.include({ accept: '*/*' });
+    expect(seen[0]).to.include({ accept: '*/*', 'accept-language': '*' });
     // ponytail: the Rust engine (reqwest) sends no default user-agent; JS keeps fetch's
     if (!isRust) expect(seen[0]).to.include({ 'user-agent': 'undici' });
     seen.length = 0;
-    const headers = { 'User-Agent': 'probe', Accept: 'text/plain' };
+    const headers = { 'User-Agent': 'probe', Accept: 'text/plain', 'Accept-Language': 'en' };
     expect(await outcome({ resources: [`http://localhost:${port}/a`], headers })).to.equal('resolved');
-    expect(seen[0]).to.include({ accept: 'text/plain', 'user-agent': 'probe' });
+    expect(seen[0]).to.include({ accept: 'text/plain', 'accept-language': 'en', 'user-agent': 'probe' });
+  });
+
+  it('should send the request path with an empty query, a query, and no fragment as fetch did', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.end('ok'); });
+    for (const suffix of ['/health?', '/health?a=1', '/health?a=1#frag', '/health#frag']) {
+      expect(await outcome({ resources: [`http://localhost:${port}${suffix}`] })).to.equal('resolved');
+    }
+    expect(seen).to.deep.equal(['/health?', '/health?a=1', '/health?a=1', '/health']);
   });
 
   it('should fail an endless redirect chain even when validateStatus accepts 3xx', async function () {
