@@ -80,11 +80,28 @@ pub fn act_args(opts: &Options, artifacts: &Path) -> Vec<String> {
 /// act copies the checkout into its container; a worktree's `.git` file points at a host
 /// path that copy lacks, so git-reading steps (the commit-msg hook test) fail there.
 pub fn worktree_note(git_is_file: bool, extra: &[String]) -> Option<String> {
-    (git_is_file && !extra.iter().any(|a| a == "-C" || a == "--directory")).then(|| {
+    (git_is_file && directory(extra).is_none()).then(|| {
         "note: this checkout is a git worktree; act's copy has no git dir, so git-reading \
          steps fail. Run from a clone, or pass -- -C <clone>."
             .into()
     })
+}
+
+/// act's default `pull_request` payload is `{}`; cucumber-js reads
+/// `pull_request.head.sha` from it and the contract step fails. Not when the caller passes
+/// a payload of their own.
+pub fn pr_event(opts: &Options, head: &str) -> Option<String> {
+    let own = opts.extra.iter().any(|a| a == "-e" || a == "--eventpath");
+    (opts.event == "pull_request" && !own)
+        .then(|| serde_json::json!({ "pull_request": { "head": { "sha": head } } }).to_string())
+}
+
+/// The checkout act runs: act's own `-C`/`--directory` passthrough value.
+pub fn directory(extra: &[String]) -> Option<&str> {
+    extra
+        .windows(2)
+        .find(|w| w[0] == "-C" || w[0] == "--directory")
+        .map(|w| w[1].as_str())
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -92,15 +109,29 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn act(args: &[String]) -> Result<i32, String> {
-    let opts = parse_args(args)?;
+    let mut opts = parse_args(args)?;
     if let Some(reason) = linux::skip_reason(linux::docker_reachable()) {
         eprintln!("{reason}");
         return Ok(0);
     }
-    if let Some(note) = worktree_note(host::repo_root().join(".git").is_file(), &opts.extra) {
+    let root = host::repo_root();
+    if let Some(note) = worktree_note(root.join(".git").is_file(), &opts.extra) {
         eprintln!("{note}");
     }
     let artifacts = package::fresh_temp_dir("act-artifacts")?;
+    let dir = directory(&opts.extra).map_or(root.clone(), std::path::PathBuf::from);
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&dir)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if let Some(event) = pr_event(&opts, &head) {
+        let path = artifacts.join("event.json");
+        std::fs::write(&path, event).map_err(|e| format!("{}: {e}", path.display()))?;
+        opts.extra
+            .extend(["-e".into(), path.to_string_lossy().to_string()]);
+    }
     let status = std::process::Command::new("act")
         .args(act_args(&opts, &artifacts))
         .current_dir(host::repo_root())
@@ -199,6 +230,29 @@ mod tests {
         assert!(note.contains("-- -C <clone>"), "{note}");
         assert_eq!(worktree_note(false, &[]), None);
         assert_eq!(worktree_note(true, &strings(&["-C", "/clone"])), None);
+    }
+
+    #[test]
+    fn pull_request_gets_a_payload_naming_the_head_sha_unless_one_is_passed() {
+        let pr = opts("pull_request", None, "node.js.yml", &[]);
+        let event: serde_json::Value =
+            serde_json::from_str(&pr_event(&pr, "abc123").expect("a payload")).unwrap();
+        assert_eq!(event["pull_request"]["head"]["sha"], "abc123");
+        assert_eq!(
+            pr_event(&opts("push", None, "node.js.yml", &[]), "abc123"),
+            None
+        );
+        for flag in ["-e", "--eventpath"] {
+            let own = opts("pull_request", None, "node.js.yml", &[flag, "/e.json"]);
+            assert_eq!(pr_event(&own, "abc123"), None, "{flag}");
+        }
+    }
+
+    #[test]
+    fn directory_is_the_value_after_dash_c() {
+        assert_eq!(directory(&strings(&["-n", "-C", "/clone"])), Some("/clone"));
+        assert_eq!(directory(&strings(&["--directory", "/d"])), Some("/d"));
+        assert_eq!(directory(&strings(&["-n"])), None);
     }
 
     #[test]
