@@ -691,16 +691,29 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
   });
 
+  it('should fail when the final 2xx comes after 21 redirects', async function () {
+    const port = await httpTarget((req, res) => {
+      const hop = Number(req.url.slice(1)) || 0;
+      if (hop === 21) return res.end('ok');
+      res.writeHead(302, { Location: `/${hop + 1}` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`], timeout: 800 })).to.match(/Timed out/);
+  });
+
   // fetch cancelled a rejected body at once; waiting for a non-2xx body that never ends
   // would hold the only poll slot (simultaneous: 1, no httpTimeout) until the timeout.
   it('should succeed when an earlier non-2xx GET response never ends its body', async function () {
     const healthyAt = Date.now() + 500;
+    let stalled = 0;
     const port = await httpTarget((req, res) => {
       if (Date.now() >= healthyAt) return res.end('ok');
       res.writeHead(503);
       res.write('x'); // never ended
+      stalled++;
     });
     expect(await outcome({ resources: [`http-get://localhost:${port}/`], simultaneous: 1 })).to.equal('resolved');
+    expect(stalled).to.be.above(0);
   });
 
   // fetch dropped Authorization on a cross-origin redirect; the redirect interceptor must too.
