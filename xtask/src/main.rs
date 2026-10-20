@@ -1,5 +1,6 @@
 //! `cargo xtask <subcommand>`: the single front door for Rust tasks.
 
+mod act;
 mod bench;
 mod build_napi;
 mod ci;
@@ -7,6 +8,7 @@ mod contract;
 mod dependents;
 mod hooks;
 mod host;
+mod linux;
 mod package;
 
 use std::process::ExitCode;
@@ -51,6 +53,16 @@ const COMMANDS: &[(&str, &str, Run)] = &[
         "dependents",
         "published dependents' suites on the packed package, three ways [--only N] [--include-optional] [--tgz P] [--keep] (run through npm)",
         dependents::run,
+    ),
+    (
+        "linux",
+        "run <command> in a Linux container over a read-only copy of the checkout (needs docker)",
+        linux::run,
+    ),
+    (
+        "act",
+        "a workflow's ubuntu jobs locally with act [--event pull_request|push] [--job J] [--workflow W] [-- act args]",
+        act::run,
     ),
     (
         "bench-startup",

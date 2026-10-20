@@ -7,7 +7,7 @@ fn xtask(args: &[&str]) -> Output {
         .expect("spawn xtask")
 }
 
-const SUBCOMMANDS: [&str; 11] = [
+const SUBCOMMANDS: [&str; 13] = [
     "ci",
     "fmt",
     "lint",
@@ -17,6 +17,8 @@ const SUBCOMMANDS: [&str; 11] = [
     "package",
     "contract",
     "dependents",
+    "linux",
+    "act",
     "bench-startup",
     "hooks",
 ];
@@ -156,4 +158,33 @@ fn hooks_points_core_hookspath_at_githooks_in_the_current_repo() {
     let _ = std::fs::remove_dir_all(&repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(String::from_utf8_lossy(&set.stdout).trim(), ".githooks");
+}
+
+/// `docker info` against a dead endpoint, so the engine probe fails whether or not a docker
+/// CLI and engine exist. Emptying PATH is not enough: Windows still finds docker in its
+/// system directories, and the windows runner's engine answers.
+fn without_docker(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(args)
+        .env("DOCKER_HOST", "tcp://127.0.0.1:1")
+        .output()
+        .expect("spawn xtask")
+}
+
+#[test]
+fn linux_skips_with_exit_0_when_no_docker_engine_is_reachable() {
+    let out = without_docker(&["linux", "true"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("docker info"), "{stderr}");
+    assert!(stderr.contains("skipping"), "{stderr}");
+}
+
+#[test]
+fn act_skips_with_exit_0_when_no_docker_engine_is_reachable() {
+    let out = without_docker(&["act", "--job", "build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("docker info"), "{stderr}");
+    assert!(stderr.contains("skipping"), "{stderr}");
 }
