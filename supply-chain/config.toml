@@ -632,7 +632,7 @@ criteria = "safe-to-run"
 notes = "Newer than the imported audit of 0.38.32; the diff is not yet audited. Dev-dependency of wait-on-features (cucumber runner) only; never built into the addon."
 
 [[exemptions.rustls]]
-version = "0.23.45"
+version = "0.23.46"
 criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
