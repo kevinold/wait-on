@@ -668,6 +668,30 @@ mod tests {
     }
 
     // 9.x parity (follow-redirects maxRedirects 21), as the JS engine on undici >=8.12.
+    // fetch's accept-encoding: by scheme (tests/https.rs), identity under Range, or the
+    // caller's own. Here too so the NoValidate instantiation reaches every arm.
+    #[tokio::test]
+    async fn accept_encoding_is_identity_under_range_and_yields_to_the_caller() {
+        for (header, value, expected) in [
+            ("x-other", "1", "gzip, deflate"),
+            ("Range", "bytes=0-", "identity"),
+            ("Accept-Encoding", "br", "br"),
+        ] {
+            let (base, rx) = serve(vec![reply(OK)]);
+            let out = with(base, |o| o.headers = vec![(header.into(), value.into())])
+                .unwrap()
+                .check(None::<NoValidate>)
+                .await;
+            assert!(out.ok, "{out:?}");
+            let head = &heads(&rx, 1)[0];
+            assert_eq!(head.matches("accept-encoding:").count(), 1, "{head}");
+            assert!(
+                head.contains(&format!("accept-encoding: {expected}\r\n")),
+                "{head}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn redirect_chain_of_21_hops_is_ready() {
         let (base, _rx) = serve(redirect_chain(21));
@@ -744,12 +768,13 @@ mod tests {
                 assert!(head.contains(h), "{head}");
             }
         }
-        assert!(seen[2].starts_with("GET /other "), "{}", seen[2]);
-        assert!(seen[2].contains("x-keep: 1\r\n"), "{}", seen[2]);
+        let (same, other) = (&seen[1], &seen[2]);
+        assert!(other.starts_with("GET /other "), "{other}");
+        assert!(other.contains("x-keep: 1\r\n"), "{other}");
         for h in ["authorization:", "cookie:", "referer:"] {
-            assert!(!seen[2].contains(h), "{}", seen[2]);
+            assert!(!other.contains(h), "{other}");
         }
-        assert!(!seen[1].contains("referer:"), "{}", seen[1]);
+        assert!(!same.contains("referer:"), "{same}");
     }
 
     // The timeout covers the whole chain, as reqwest's client timeout and the JS
