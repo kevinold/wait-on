@@ -709,6 +709,39 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(await outcome({ resources: [`http://localhost:${port}/`], timeout: 800 })).to.match(/Timed out/);
   });
 
+  // undici's redirect handler follows 300 with a Location, like 301/302/303/307/308.
+  it('should follow a 300 with a Location', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/') { res.writeHead(300, { Location: '/ok' }); return res.end(); }
+      res.end('ok');
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(seen.slice(0, 2)).to.deep.equal(['/', '/ok']);
+  });
+
+  it('should hand a 3xx without Location to validateStatus instead of following it', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.writeHead(302); res.end(); });
+    const opts = { resources: [`http://localhost:${port}/a?`], validateStatus: (status) => status === 302 };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(seen).to.deep.equal(['/a?']);
+  });
+
+  // Known delta from fetch and 9.x: undici's loop check compares pathname + search, so a
+  // redirect to the same path plus an empty `?` is a loop and is never requested.
+  it('should stop a redirect to the same path plus an empty query as a loop', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/selfq') { res.writeHead(302, { Location: '/selfq?' }); return res.end(); }
+      res.end('ok');
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/selfq`], timeout: 600 })).to.match(/Timed out/);
+    expect(seen).to.include('/selfq').and.not.include('/selfq?');
+  });
+
   // fetch cancelled a rejected body at once; waiting for a non-2xx body that never ends
   // would hold the only poll slot (simultaneous: 1, no httpTimeout) until the timeout.
   it('should succeed when an earlier non-2xx GET response never ends its body', async function () {

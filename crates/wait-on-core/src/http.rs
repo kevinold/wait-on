@@ -2,10 +2,10 @@
 
 use std::future::Future;
 use std::sync::{Mutex, Once};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
-use reqwest::{Certificate, Client, ClientBuilder, Identity, Method, Proxy, redirect::Policy};
+use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue, LOCATION};
+use reqwest::{Certificate, Client, ClientBuilder, Identity, Method, Proxy, Url, redirect::Policy};
 use tokio::sync::watch;
 
 /// Per-resource options, fixed when the checker is built.
@@ -52,8 +52,16 @@ pub struct HttpChecker {
     method: Method,
     url: String,
     headers: Vec<(String, String)>,
+    follow_redirect: bool,
+    /// Covers the whole redirect chain and the final body.
+    timeout: Option<Duration>,
     cancel: watch::Sender<bool>,
 }
+
+/// 9.x and the JS engine (undici >=8.12): 21 redirects are followed, a 22nd fails.
+const MAX_REDIRECTS: usize = 21;
+/// undici's redirect handler follows these when they carry a `Location`.
+const REDIRECTS: [u16; 6] = [300, 301, 302, 303, 307, 308];
 
 static PROVIDER: Once = Once::new();
 
@@ -76,14 +84,8 @@ impl HttpChecker {
                     ACCEPT_LANGUAGE,
                     HeaderValue::from_static("*"),
                 )]))
-                .redirect(if opts.follow_redirect {
-                    Policy::limited(21) // 9.x and the JS engine: 21 followed, a 22nd fails
-                } else {
-                    Policy::none()
-                });
-            if let Some(ms) = opts.timeout_ms.filter(|ms| *ms > 0) {
-                b = b.timeout(Duration::from_millis(ms));
-            }
+                // `send` follows redirects itself, hop by hop like undici's redirect handler
+                .redirect(Policy::none());
             if let Some(p) = &proxy {
                 b = b.proxy(p.clone());
             }
@@ -112,6 +114,11 @@ impl HttpChecker {
             method,
             url: opts.url,
             headers: opts.headers,
+            follow_redirect: opts.follow_redirect,
+            timeout: opts
+                .timeout_ms
+                .filter(|ms| *ms > 0)
+                .map(Duration::from_millis),
             cancel: watch::channel(false).0,
         })
     }
@@ -146,13 +153,61 @@ impl HttpChecker {
         let Some(client) = self.client.lock().unwrap().clone() else {
             return cancelled();
         };
-        let mut req = client.request(self.method.clone(), &self.url);
-        for (k, v) in &self.headers {
-            req = req.header(k, v);
-        }
-        let mut resp = match req.send().await {
-            Ok(r) => r,
-            Err(e) => return not_ready(&e),
+        let deadline = self.timeout.map(|t| Instant::now() + t);
+        let mut url = match Url::parse(&self.url) {
+            Ok(u) => u,
+            Err(e) => return failed(e.to_string()),
+        };
+        let mut headers = self.headers.clone();
+        // undici's loop history: the url as first sent, then each hop as pathname + search
+        let mut history: Vec<String> = vec![];
+        let mut resp = loop {
+            let mut req = client.request(self.method.clone(), url.clone());
+            for (k, v) in &headers {
+                req = req.header(k, v);
+            }
+            if let Some(d) = deadline {
+                req = req.timeout(d.saturating_duration_since(Instant::now()));
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => return not_ready(&e),
+            };
+            let location = (self.follow_redirect && REDIRECTS.contains(&resp.status().as_u16()))
+                .then(|| resp.headers().get(LOCATION))
+                .flatten()
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+            let Some(location) = location else {
+                break resp;
+            };
+            if history.len() >= MAX_REDIRECTS {
+                return failed("max redirects".into());
+            }
+            history.push(if history.is_empty() {
+                without_fragment(&url).into()
+            } else {
+                loop_key(&url)
+            });
+            let next = match url.join(&location) {
+                Ok(u) => u,
+                Err(e) => return failed(e.to_string()),
+            };
+            if history.contains(&loop_key(&next)) {
+                return failed(format!(
+                    "Redirect loop detected. Cannot redirect to {}.",
+                    next.origin().ascii_serialization()
+                ));
+            }
+            // undici's cleanRequestHeaders: host always, credentials when the origin changes
+            let cross_origin = next.origin() != url.origin();
+            headers.retain(|(k, _)| {
+                !k.eq_ignore_ascii_case("host")
+                    && !(cross_origin
+                        && ["authorization", "cookie", "proxy-authorization"]
+                            .iter()
+                            .any(|h| k.eq_ignore_ascii_case(h)))
+            });
+            url = next;
         };
         let status = resp.status();
         let mut out = HttpOutcome {
@@ -202,6 +257,28 @@ fn with_tls(mut b: ClientBuilder, opts: &HttpOptions) -> reqwest::Result<ClientB
     Ok(b)
 }
 
+fn without_fragment(u: &Url) -> Url {
+    let mut u = u.clone();
+    u.set_fragment(None);
+    u
+}
+
+/// How undici's redirect handler names a hop: pathname + search, so an empty `?` drops.
+fn loop_key(u: &Url) -> String {
+    let mut u = without_fragment(u);
+    if u.query() == Some("") {
+        u.set_query(None);
+    }
+    u.into()
+}
+
+fn failed(error: String) -> HttpOutcome {
+    HttpOutcome {
+        error: Some(error),
+        ..Default::default()
+    }
+}
+
 fn cancelled() -> HttpOutcome {
     HttpOutcome {
         error: Some("cancelled".into()),
@@ -237,24 +314,33 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
-    /// Scripted reply: raw bytes written after reading one request head, then
+    /// Scripted reply: raw bytes written `wait` after reading one request head, then
     /// (if `stall`) the connection is held open instead of closed.
     struct Reply {
         raw: String,
         stall: bool,
+        wait: Duration,
     }
 
     fn reply(raw: &str) -> Reply {
         Reply {
             raw: raw.to_string(),
             stall: false,
+            wait: Duration::ZERO,
         }
     }
 
     fn stall(raw: &str) -> Reply {
         Reply {
-            raw: raw.to_string(),
             stall: true,
+            ..reply(raw)
+        }
+    }
+
+    fn slow(raw: &str, ms: u64) -> Reply {
+        Reply {
+            wait: Duration::from_millis(ms),
+            ..reply(raw)
         }
     }
 
@@ -263,6 +349,10 @@ mod tests {
     fn serve(script: Vec<Reply>) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        (base, serve_on(listener, script))
+    }
+
+    fn serve_on(listener: TcpListener, script: Vec<Reply>) -> mpsc::Receiver<String> {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             for r in script {
@@ -278,13 +368,14 @@ mod tests {
                     }
                 }
                 let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+                thread::sleep(r.wait);
                 let _ = s.write_all(r.raw.as_bytes());
                 if r.stall {
                     thread::sleep(Duration::from_secs(2));
                 }
             }
         });
-        (base, rx)
+        rx
     }
 
     fn checker(
@@ -580,7 +671,161 @@ mod tests {
             .check(None::<NoValidate>)
             .await;
         assert!(!out.ok, "{out:?}");
+        assert!(
+            out.error.as_deref().unwrap_or("").contains("max redirects"),
+            "{out:?}"
+        );
+    }
+
+    fn redirect(status: &str, location: &str) -> Reply {
+        reply(&format!(
+            "HTTP/1.1 {status}\r\nLocation: {location}\r\nContent-Length: 0\r\n{CLOSE}\r\n"
+        ))
+    }
+
+    /// Request heads seen so far, waiting briefly for each.
+    fn heads(rx: &mpsc::Receiver<String>, n: usize) -> Vec<String> {
+        (0..n)
+            .map(|_| rx.recv_timeout(Duration::from_secs(2)).unwrap())
+            .collect()
+    }
+
+    // undici's redirect handler: credentials stay on a same-origin hop and are dropped when
+    // the origin changes; no hop gets a Referer.
+    #[tokio::test]
+    async fn cross_origin_hop_drops_credentials_and_same_origin_keeps_them() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let rx = serve_on(
+            listener,
+            vec![
+                redirect("302 Found", "/same"),
+                redirect("302 Found", &format!("http://localhost:{port}/other")),
+                reply(OK),
+            ],
+        );
+        let c = HttpChecker::new(HttpOptions {
+            url: format!("http://127.0.0.1:{port}/"),
+            method: "GET".into(),
+            headers: [
+                ("authorization", "Basic dTpw"),
+                ("cookie", "a=1"),
+                ("proxy-authorization", "Basic cDpw"),
+                ("x-keep", "1"),
+            ]
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .to_vec(),
+            follow_redirect: true,
+            timeout_ms: Some(2000),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(c.check(None::<NoValidate>).await.ok);
+        let seen = heads(&rx, 3);
+        for head in &seen[..2] {
+            for h in [
+                "authorization: Basic dTpw",
+                "cookie: a=1",
+                "proxy-authorization: Basic cDpw",
+            ] {
+                assert!(head.contains(h), "{head}");
+            }
+        }
+        assert!(seen[2].starts_with("GET /other "), "{}", seen[2]);
+        assert!(seen[2].contains("x-keep: 1\r\n"), "{}", seen[2]);
+        for h in ["authorization:", "cookie:", "referer:"] {
+            assert!(!seen[2].contains(h), "{}", seen[2]);
+        }
+        assert!(!seen[1].contains("referer:"), "{}", seen[1]);
+    }
+
+    // The timeout covers the whole chain, as reqwest's client timeout and the JS
+    // AbortSignal do, not each hop.
+    #[tokio::test]
+    async fn timeout_covers_the_whole_redirect_chain() {
+        let hop = |n| {
+            slow(
+                &format!(
+                    "HTTP/1.1 302 Found\r\nLocation: /{n}\r\nContent-Length: 0\r\n{CLOSE}\r\n"
+                ),
+                150,
+            )
+        };
+        let (base, _rx) = serve(vec![hop(1), hop(2), hop(3), reply(OK)]);
+        let out = checker(base, "GET", true, Some(300))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(!out.ok, "{out:?}");
         assert!(out.error.is_some(), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn redirect_without_location_is_the_response() {
+        let (base, rx) = serve(vec![reply(&format!(
+            "HTTP/1.1 302 Found\r\nContent-Length: 0\r\n{CLOSE}\r\n"
+        ))]);
+        let accept_302: NoValidate = |s| std::future::ready(Ok(s == 302));
+        let out = checker(format!("{base}/a?"), "GET", true, Some(1000))
+            .check(Some(accept_302))
+            .await;
+        assert!(out.ok, "{out:?}");
+        assert_eq!(out.status, Some(302));
+        assert!(heads(&rx, 1)[0].starts_with("GET /a? "));
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    // undici follows 300 like 301/302/303/307/308.
+    #[tokio::test]
+    async fn multiple_choices_with_location_is_followed() {
+        let (base, rx) = serve(vec![redirect("300 Multiple Choices", "/ok"), reply(OK)]);
+        let out = checker(base, "GET", true, Some(1000))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(out.ok, "{out:?}");
+        assert!(heads(&rx, 2)[1].starts_with("GET /ok "));
+    }
+
+    // undici's loop check: a redirect to a URL already in the chain fails. It compares
+    // pathname + search, so `/selfq` -> `/selfq?` is a loop too (the JS engine's delta).
+    #[tokio::test]
+    async fn redirect_to_a_visited_url_is_a_loop() {
+        for (start, script) in [
+            (
+                "/a",
+                vec![
+                    redirect("302 Found", "/b"),
+                    redirect("302 Found", "/a"),
+                    reply(OK),
+                ],
+            ),
+            ("/selfq", vec![redirect("302 Found", "/selfq?"), reply(OK)]),
+        ] {
+            let (base, _rx) = serve(script);
+            let out = checker(format!("{base}{start}"), "GET", true, Some(1000))
+                .check(None::<NoValidate>)
+                .await;
+            assert!(!out.ok, "{start}: {out:?}");
+            assert!(
+                out.error
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Redirect loop detected"),
+                "{start}: {out:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unjoinable_location_and_unparsable_url_are_not_ready() {
+        let (base, _rx) = serve(vec![redirect("302 Found", "http://[::1")]);
+        let out = checker(base, "GET", true, Some(1000))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(!out.ok && out.error.is_some(), "{out:?}");
+        let out = checker("not a url".into(), "GET", true, None)
+            .check(None::<NoValidate>)
+            .await;
+        assert!(!out.ok && out.error.is_some(), "{out:?}");
     }
 
     fn closed_port() -> u16 {
