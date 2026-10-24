@@ -189,7 +189,8 @@ impl HttpChecker {
             let location = (self.follow_redirect && REDIRECTS.contains(&resp.status().as_u16()))
                 .then(|| resp.headers().get(LOCATION))
                 .flatten()
-                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                .filter(|l| !l.is_empty());
             let Some(location) = location else {
                 break resp;
             };
@@ -201,10 +202,13 @@ impl HttpChecker {
             } else {
                 loop_key(&url)
             });
-            let next = match url.join(&location) {
+            let mut next = match url.join(&location) {
                 Ok(u) => u,
                 Err(e) => return failed(e.to_string()),
             };
+            // undici rebuilds the hop from origin + pathname + search: userinfo is dropped
+            let _ = next.set_username("");
+            let _ = next.set_password(None);
             if history.contains(&loop_key(&next)) {
                 return failed(format!(
                     "Redirect loop detected. Cannot redirect to {}.",
@@ -667,7 +671,6 @@ mod tests {
         script
     }
 
-    // 9.x parity (follow-redirects maxRedirects 21), as the JS engine on undici >=8.12.
     // fetch's accept-encoding: by scheme (tests/https.rs), identity under Range, or the
     // caller's own. Here too so the NoValidate instantiation reaches every arm.
     #[tokio::test]
@@ -692,6 +695,7 @@ mod tests {
         }
     }
 
+    // 9.x parity (follow-redirects maxRedirects 21), as the JS engine on undici >=8.12.
     #[tokio::test]
     async fn redirect_chain_of_21_hops_is_ready() {
         let (base, _rx) = serve(redirect_chain(21));
@@ -795,6 +799,43 @@ mod tests {
             .await;
         assert!(!out.ok, "{out:?}");
         assert!(out.error.is_some(), "{out:?}");
+    }
+
+    // undici's `headers.location || null`: an empty Location is no redirect either.
+    #[tokio::test]
+    async fn redirect_with_an_empty_location_is_the_response() {
+        let (base, rx) = serve(vec![reply(&format!(
+            "HTTP/1.1 302 Found\r\nLocation: \r\nContent-Length: 0\r\n{CLOSE}\r\n"
+        ))]);
+        let accept_302: NoValidate = |s| std::future::ready(Ok(s == 302));
+        let out = checker(base, "GET", true, Some(1000))
+            .check(Some(accept_302))
+            .await;
+        assert!(out.ok, "{out:?}");
+        assert_eq!(out.status, Some(302));
+        assert_eq!(heads(&rx, 1).len(), 1);
+    }
+
+    // undici rebuilds each hop from origin + pathname + search, so userinfo in a Location
+    // never becomes credentials.
+    #[tokio::test]
+    async fn location_userinfo_is_not_sent_on_the_hop() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let rx = serve_on(
+            listener,
+            vec![
+                redirect("302 Found", &format!("http://u:p@127.0.0.1:{port}/next")),
+                reply(OK),
+            ],
+        );
+        let out = checker(format!("http://127.0.0.1:{port}/"), "GET", true, Some(1000))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(out.ok, "{out:?}");
+        let hop = &heads(&rx, 2)[1];
+        assert!(hop.starts_with("GET /next "), "{hop}");
+        assert!(!hop.contains("authorization:"), "{hop}");
     }
 
     #[tokio::test]

@@ -70,7 +70,8 @@ const requestDispatcher = dispatcher.compose(
 
 **Rust engine** (`crates/wait-on-core/src/http.rs`). The client never follows redirects (`Policy::none()`, `http.rs:88`). `HttpChecker::send` follows them itself, mirroring undici's `redirect-handler.js`:
 
-- Redirectable: `300 301 302 303 307 308` with a `Location` (`REDIRECTS`, `http.rs:64`). Anything else, including a 3xx without `Location`, is the response the status rule sees.
+- Redirectable: `300 301 302 303 307 308` with a non-empty `Location` (`REDIRECTS`, `http.rs:64`; undici's `headers.location || null`). Anything else, including a 3xx without `Location` or with an empty one, is the response the status rule sees. An empty `Location` joined naively resolves to the current URL and fails as a loop instead.
+- Userinfo in a `Location` is cleared after the join: undici rebuilds the hop from origin + pathname + search, while reqwest would turn `http://u:p@host/` into an `Authorization: Basic` header.
 - Cap: `MAX_REDIRECTS = 21` (`http.rs:62`); a 22nd redirect fails with `max redirects`.
 - accept-encoding is set inside the loop from each hop's scheme (`http.rs:174`), unless the caller sent one.
 - Loop check (`http.rs:208`): a history of visited URLs, the first as sent and each later one as undici names it (`loop_key`, `http.rs:280`: no fragment, an empty `?` dropped). A target already in the history fails with `Redirect loop detected`.

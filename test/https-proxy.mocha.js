@@ -884,6 +884,14 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(seen).to.deep.equal(['/a?']);
   });
 
+  it('should hand a 3xx with an empty Location to validateStatus instead of following it', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.writeHead(302, { Location: '' }); res.end(); });
+    const opts = { resources: [`http://localhost:${port}/a`], validateStatus: (status) => status === 302 };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(seen).to.deep.equal(['/a']);
+  });
+
   // Known delta from fetch and 9.x: undici's loop check compares pathname + search, so a
   // redirect to the same path plus an empty `?` is a loop and is never requested.
   it('should stop a redirect to the same path plus an empty query as a loop', async function () {
