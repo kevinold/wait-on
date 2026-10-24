@@ -657,7 +657,7 @@ criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
 [[exemptions.rustls-webpki]]
-version = "0.103.15"
+version = "0.103.16"
 criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
@@ -812,7 +812,7 @@ criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 0.8.1; the diff is not yet audited."
 
 [[exemptions.tokio]]
-version = "1.53.1"
+version = "1.53.3"
 criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
@@ -937,7 +937,7 @@ criteria = "safe-to-deploy"
 notes = "No imported audit covers this version or an older base to diff from."
 
 [[exemptions.webpki-root-certs]]
-version = "1.0.9"
+version = "1.0.11"
 criteria = "safe-to-deploy"
 notes = "Newer than the imported audit of 1.0.4; the diff is not yet audited."
 
