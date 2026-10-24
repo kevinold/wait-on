@@ -16,7 +16,7 @@ pub struct HttpOptions {
     pub method: String,
     /// Sent verbatim on every request.
     pub headers: Vec<(String, String)>,
-    /// `true` follows up to 20 hops; `false` hands the 3xx to the status rule.
+    /// `true` follows up to 21 hops; `false` hands the 3xx to the status rule.
     pub follow_redirect: bool,
     /// Whole-request timeout (connect through body); `None` or 0 means no timeout.
     pub timeout_ms: Option<u64>,
@@ -77,7 +77,7 @@ impl HttpChecker {
                     HeaderValue::from_static("*"),
                 )]))
                 .redirect(if opts.follow_redirect {
-                    Policy::limited(20) // undici fetch's hop limit
+                    Policy::limited(21) // 9.x and the JS engine: 21 followed, a 22nd fails
                 } else {
                     Policy::none()
                 });
@@ -550,33 +550,37 @@ mod tests {
         assert!(!own.contains("accept-language: *"), "{own}");
     }
 
-    #[tokio::test]
-    async fn redirect_chain_over_20_hops_is_not_ready() {
-        let hop = format!("HTTP/1.1 302 Found\r\nLocation: /r\r\nContent-Length: 0\r\n{CLOSE}\r\n");
-        let (base, _rx) = serve((0..25).map(|_| reply(&hop)).collect());
-        let out = checker(base, "GET", true, Some(2000))
-            .check(None::<NoValidate>)
-            .await;
-        assert!(!out.ok, "{out:?}");
-        assert!(
-            out.error
-                .as_deref()
-                .unwrap_or("")
-                .contains("too many redirects"),
-            "{out:?}"
-        );
+    /// `hops` redirects (`/1`, `/2`, ...), then 200.
+    fn redirect_chain(hops: usize) -> Vec<Reply> {
+        let mut script: Vec<Reply> = (1..=hops)
+            .map(|n| {
+                reply(&format!(
+                    "HTTP/1.1 302 Found\r\nLocation: /{n}\r\nContent-Length: 0\r\n{CLOSE}\r\n"
+                ))
+            })
+            .collect();
+        script.push(reply(OK));
+        script
     }
 
+    // 9.x parity (follow-redirects maxRedirects 21), as the JS engine on undici >=8.12.
     #[tokio::test]
-    async fn redirect_chain_of_exactly_20_hops_is_ready() {
-        let hop = format!("HTTP/1.1 302 Found\r\nLocation: /r\r\nContent-Length: 0\r\n{CLOSE}\r\n");
-        let mut script: Vec<Reply> = (0..20).map(|_| reply(&hop)).collect();
-        script.push(reply(OK));
-        let (base, _rx) = serve(script);
+    async fn redirect_chain_of_21_hops_is_ready() {
+        let (base, _rx) = serve(redirect_chain(21));
         let out = checker(base, "GET", true, Some(2000))
             .check(None::<NoValidate>)
             .await;
         assert!(out.ok, "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn redirect_chain_of_22_hops_is_not_ready() {
+        let (base, _rx) = serve(redirect_chain(22));
+        let out = checker(base, "GET", true, Some(2000))
+            .check(None::<NoValidate>)
+            .await;
+        assert!(!out.ok, "{out:?}");
+        assert!(out.error.is_some(), "{out:?}");
     }
 
     fn closed_port() -> u16 {

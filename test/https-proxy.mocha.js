@@ -689,24 +689,23 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(await outcome(opts)).to.match(/Timed out/);
   });
 
-  // fetch followed 20 redirects and only failed on a 21st.
-  it('should succeed when the final 2xx comes after exactly 20 redirects', async function () {
-    const port = await httpTarget((req, res) => {
-      const hop = Number(req.url.slice(1)) || 0;
-      if (hop === 20) return res.end('ok');
-      res.writeHead(302, { Location: `/${hop + 1}` });
-      res.end();
-    });
-    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+  // 9.5.1 (follow-redirects maxRedirects 21) followed 21 redirects and failed on a 22nd.
+  const redirectChain = (hops) => httpTarget((req, res) => {
+    const hop = Number(req.url.slice(1)) || 0;
+    if (hop === hops) return res.end('ok');
+    res.writeHead(302, { Location: `/${hop + 1}` });
+    res.end();
   });
 
-  it('should fail when the final 2xx comes after 21 redirects', async function () {
-    const port = await httpTarget((req, res) => {
-      const hop = Number(req.url.slice(1)) || 0;
-      if (hop === 21) return res.end('ok');
-      res.writeHead(302, { Location: `/${hop + 1}` });
-      res.end();
+  for (const hops of [20, 21]) {
+    it(`should succeed when the final 2xx comes after exactly ${hops} redirects`, async function () {
+      const port = await redirectChain(hops);
+      expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
     });
+  }
+
+  it('should fail when the final 2xx comes after 22 redirects', async function () {
+    const port = await redirectChain(22);
     expect(await outcome({ resources: [`http://localhost:${port}/`], timeout: 800 })).to.match(/Timed out/);
   });
 
