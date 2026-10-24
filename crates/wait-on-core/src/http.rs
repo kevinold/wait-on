@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::{Mutex, Once};
 use std::time::{Duration, Instant};
 
-use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue, LOCATION};
+use reqwest::header::{ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, LOCATION};
 use reqwest::{Certificate, Client, ClientBuilder, Identity, Method, Proxy, Url, redirect::Policy};
 use tokio::sync::watch;
 
@@ -159,12 +159,25 @@ impl HttpChecker {
             Err(e) => return failed(e.to_string()),
         };
         let mut headers = self.headers.clone();
+        let sent = |name: &str| headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name));
+        let (own_encoding, range) = (sent("accept-encoding"), sent("range"));
         // undici's loop history: the url as first sent, then each hop as pathname + search
         let mut history: Vec<String> = vec![];
         let mut resp = loop {
             let mut req = client.request(self.method.clone(), url.clone());
             for (k, v) in &headers {
                 req = req.header(k, v);
+            }
+            // fetch's accept-encoding, picked per hop from that hop's scheme; never decoded
+            if !own_encoding {
+                req = req.header(
+                    ACCEPT_ENCODING,
+                    match (range, url.scheme()) {
+                        (true, _) => "identity",
+                        (false, "https") => "br, gzip, deflate, zstd",
+                        _ => "gzip, deflate",
+                    },
+                );
             }
             if let Some(d) = deadline {
                 req = req.timeout(d.saturating_duration_since(Instant::now()));

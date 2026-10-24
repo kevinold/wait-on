@@ -6,6 +6,7 @@ mod common;
 
 use common::*;
 use tokio::time::advance;
+use wait_on_core::http::{HttpChecker, HttpOptions, NoValidate};
 
 fn roots(name: &str) -> Option<Vec<String>> {
     Some(vec![pem(name)])
@@ -109,4 +110,80 @@ async fn https_reverse_ready_when_roots_wrong() {
     s.reverse = true;
     let run = first_check(s, sink, &lines, || error_line(&lines, &srv.url).is_some()).await;
     assert_eq!(run.await.unwrap(), Ok(()));
+}
+
+/// One check of `url` with `headers`, which must be ready.
+async fn check_ok(url: &str, headers: &[(&str, &str)], follow_redirect: bool) {
+    let c = HttpChecker::new(HttpOptions {
+        url: url.into(),
+        method: "GET".into(),
+        headers: headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        follow_redirect,
+        timeout_ms: Some(2000),
+        ..Default::default()
+    })
+    .unwrap();
+    let out = c.check(None::<NoValidate>).await;
+    assert!(out.ok, "{out:?}");
+}
+
+/// The accept-encoding of the first request `srv` saw.
+fn encoding(srv: &Served) -> Option<String> {
+    let heads = text(&srv.heads);
+    heads[0]
+        .lines()
+        .find_map(|l| l.strip_prefix("accept-encoding: "))
+        .map(str::to_owned)
+}
+
+const HTTP_ENC: &str = "gzip, deflate";
+const HTTPS_ENC: &str = "br, gzip, deflate, zstd";
+
+// The JS engine's (fetch's) default accept-encoding, chosen by each hop's scheme.
+#[tokio::test]
+async fn accept_encoding_by_scheme_without_redirects() {
+    let plain = serve(Some(OK_CLOSE), None);
+    let secure = serve(Some(OK_CLOSE), Some(tls(false)));
+    check_ok(&plain.url, &[], false).await;
+    check_ok(&secure.url, &[], false).await;
+    assert_eq!(encoding(&plain).as_deref(), Some(HTTP_ENC));
+    assert_eq!(encoding(&secure).as_deref(), Some(HTTPS_ENC));
+}
+
+#[tokio::test]
+async fn accept_encoding_switches_with_the_scheme_on_each_hop() {
+    let secure = serve(Some(OK_CLOSE), Some(tls(false)));
+    let plain = serve(Some(redirect_to(&format!("{}/ok", secure.url))), None);
+    check_ok(&plain.url, &[], true).await;
+    assert_eq!(encoding(&plain).as_deref(), Some(HTTP_ENC));
+    assert_eq!(encoding(&secure).as_deref(), Some(HTTPS_ENC));
+
+    let plain = serve(Some(OK_CLOSE), None);
+    let secure = serve(
+        Some(redirect_to(&format!("{}/ok", plain.url))),
+        Some(tls(false)),
+    );
+    check_ok(&secure.url, &[], true).await;
+    assert_eq!(encoding(&secure).as_deref(), Some(HTTPS_ENC));
+    assert_eq!(encoding(&plain).as_deref(), Some(HTTP_ENC));
+}
+
+// A caller accept-encoding replaces the default on every hop; a Range header makes it identity.
+#[tokio::test]
+async fn caller_accept_encoding_and_range_hold_on_every_hop() {
+    for (header, expected) in [("Accept-Encoding", "br"), ("Range", "identity")] {
+        let secure = serve(Some(OK_CLOSE), Some(tls(false)));
+        let plain = serve(Some(redirect_to(&format!("{}/ok", secure.url))), None);
+        check_ok(
+            &plain.url,
+            &[(header, if header == "Range" { "bytes=0-" } else { "br" })],
+            true,
+        )
+        .await;
+        assert_eq!(encoding(&plain).as_deref(), Some(expected), "{header}");
+        assert_eq!(encoding(&secure).as_deref(), Some(expected), "{header}");
+    }
 }

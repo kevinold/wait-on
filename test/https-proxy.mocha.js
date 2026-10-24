@@ -670,6 +670,95 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(seen[0]).to.include({ accept: 'text/plain', 'accept-language': 'en', 'user-agent': 'probe' });
   });
 
+  // fetch sent accept-encoding per hop by that hop's scheme: `br, gzip, deflate, zstd` over
+  // https, `gzip, deflate` otherwise, `identity` under a Range header. A server that
+  // answers 406 without it must still resolve.
+  const HTTP_ENC = 'gzip, deflate';
+  const HTTPS_ENC = 'br, gzip, deflate, zstd';
+  function encodingServer(scheme, seen, redirectTo) {
+    const handler = (req, res) => {
+      seen.push(req.headers['accept-encoding']);
+      if (redirectTo && req.url === '/') { res.writeHead(302, { Location: redirectTo() }); return res.end(); }
+      res.statusCode = req.headers['accept-encoding'] ? 200 : 406;
+      res.end();
+    };
+    const server = scheme === 'https' ? https.createServer({ key: fx.key, cert: fx.cert }, handler) : http.createServer(handler);
+    servers.push(server);
+    return new Promise((resolve) => server.listen(0, 'localhost', () => resolve(server.address().port)));
+  }
+  // http -> https: the https server, then the http one redirecting to it
+  async function httpToHttps(seen) {
+    const ports = { https: await encodingServer('https', seen.https) };
+    ports.http = await encodingServer('http', seen.http, () => `https://localhost:${ports.https}/ok`);
+    return ports;
+  }
+
+  for (const [prefix, scheme, expected] of [
+    ['http', 'http', HTTP_ENC],
+    ['http-get', 'http', HTTP_ENC],
+    ['https', 'https', HTTPS_ENC],
+    ['https-get', 'https', HTTPS_ENC]
+  ]) {
+    it(`should send accept-encoding ${expected} for ${prefix} to a server that returns 406 without it`, async function () {
+      if (!fx) this.skip(); // openssl not available
+      const seen = [];
+      const port = await encodingServer(scheme, seen);
+      expect(await outcome({ resources: [`${prefix}://localhost:${port}/`] })).to.equal('resolved');
+      expect(seen[0]).to.equal(expected);
+    });
+  }
+
+  it('should switch accept-encoding by scheme on http->https and https->http redirect hops', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = {};
+    ports.https = await encodingServer('https', seen.https, () => `http://localhost:${ports.http}/ok`);
+    ports.http = await encodingServer('http', seen.http, () => `https://localhost:${ports.https}/ok`);
+    expect(await outcome({ resources: [`http://localhost:${ports.http}/`] })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal([HTTP_ENC, HTTPS_ENC]);
+    seen.http.length = seen.https.length = 0;
+    expect(await outcome({ resources: [`https://localhost:${ports.https}/`] })).to.equal('resolved');
+    expect([seen.https[0], seen.http[0]]).to.deep.equal([HTTPS_ENC, HTTP_ENC]);
+  });
+
+  it('should send the caller accept-encoding on every redirect hop', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = await httpToHttps(seen);
+    const opts = { resources: [`http://localhost:${ports.http}/`], headers: { 'Accept-Encoding': 'br' } };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['br', 'br']);
+  });
+
+  it('should send accept-encoding by scheme when followRedirect is false', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const httpPort = await encodingServer('http', seen.http);
+    const httpsPort = await encodingServer('https', seen.https);
+    expect(await outcome({ resources: [`http://localhost:${httpPort}/`], followRedirect: false })).to.equal('resolved');
+    expect(await outcome({ resources: [`https://localhost:${httpsPort}/`], followRedirect: false })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal([HTTP_ENC, HTTPS_ENC]);
+  });
+
+  it('should send accept-encoding identity under a Range header over http and https', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const httpPort = await encodingServer('http', seen.http);
+    const httpsPort = await encodingServer('https', seen.https);
+    const headers = { Range: 'bytes=0-' };
+    expect(await outcome({ resources: [`http://localhost:${httpPort}/`], headers })).to.equal('resolved');
+    expect(await outcome({ resources: [`https://localhost:${httpsPort}/`], headers })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['identity', 'identity']);
+  });
+
+  it('should send accept-encoding identity under a Range header on every redirect hop', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = await httpToHttps(seen);
+    expect(await outcome({ resources: [`http://localhost:${ports.http}/`], headers: { Range: 'bytes=0-' } })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['identity', 'identity']);
+  });
+
   it('should send the request path with an empty query, a query, and no fragment as fetch did', async function () {
     const seen = [];
     const port = await httpTarget((req, res) => { seen.push(req.url); res.end('ok'); });
