@@ -11,7 +11,9 @@ function start() {
   const connects = [];
   const server = http.createServer((req, res) => {
     requests.push({ line: `${req.method} ${req.url}`, proxyAuthorization: req.headers['proxy-authorization'] });
-    const upstream = http.request(req.url, { method: req.method, headers: req.headers }, (up) => {
+    // path as received: http.request(url) alone would drop an empty `?`
+    const path = req.url.slice(new URL(req.url).origin.length);
+    const upstream = http.request(req.url, { path, method: req.method, headers: req.headers }, (up) => {
       res.writeHead(up.statusCode, up.headers);
       up.pipe(res);
     });

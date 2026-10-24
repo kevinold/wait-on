@@ -787,6 +787,20 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
     }
 
+    // fetch (and the JS engine) request a Location's empty `?` as written, minus a #fragment.
+    #[tokio::test]
+    async fn redirect_hop_keeps_an_empty_query() {
+        for location in ["/final?", "/final?#frag"] {
+            let (base, rx) = serve(vec![redirect("302 Found", location), reply(OK)]);
+            let out = checker(base, "GET", true, Some(1000))
+                .check(None::<NoValidate>)
+                .await;
+            assert!(out.ok, "{out:?}");
+            let hop = &heads(&rx, 2)[1];
+            assert!(hop.starts_with("GET /final? "), "{location}: {hop}");
+        }
+    }
+
     // undici follows 300 like 301/302/303/307/308.
     #[tokio::test]
     async fn multiple_choices_with_location_is_followed() {

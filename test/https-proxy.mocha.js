@@ -768,6 +768,72 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(seen).to.deep.equal(['/health?', '/health?a=1', '/health?a=1', '/health']);
   });
 
+  // fetch requested a redirect Location's path and query as written too: an empty `?` is
+  // kept and a #fragment dropped. undici's redirect interceptor alone would drop the `?`.
+  for (const [location, expected] of [['/final?', '/final?'], ['/final?#frag', '/final?'], ['/final?a=1', '/final?a=1'], ['/final#frag', '/final']]) {
+    it(`should request ${expected} after a redirect to ${location}`, async function () {
+      const seen = [];
+      const port = await httpTarget((req, res) => {
+        seen.push(req.url);
+        if (req.url === '/') { res.writeHead(302, { Location: location }); return res.end(); }
+        res.end('ok');
+      });
+      expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+      expect(seen.slice(0, 2)).to.deep.equal(['/', expected]);
+    });
+  }
+
+  it('should keep an empty query on a cross-origin redirect hop', async function () {
+    const seen = [];
+    const other = await httpTarget((req, res) => { seen.push(req.url); res.end('ok'); });
+    const port = await httpTarget((req, res) => {
+      res.writeHead(302, { Location: `http://localhost:${other}/final?` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(seen[0]).to.equal('/final?');
+  });
+
+  // The path saved from one hop's Location must only be sent on the hop it was for: after
+  // A /first? redirects cross-origin to B /second, B must get /second, not /first?.
+  it('should not reuse a saved empty-query path on a later cross-origin hop', async function () {
+    const seen = { a: [], b: [] };
+    const b = await httpTarget((req, res) => { seen.b.push(req.url); res.end('ok'); });
+    const a = await httpTarget((req, res) => {
+      seen.a.push(req.url);
+      if (req.url === '/') { res.writeHead(302, { Location: '/first?' }); return res.end(); }
+      res.writeHead(302, { Location: `http://localhost:${b}/second` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${a}/`] })).to.equal('resolved');
+    expect(seen.a.slice(0, 2)).to.deep.equal(['/', '/first?']);
+    expect(seen.b[0]).to.equal('/second');
+  });
+
+  // A redirect hop through a proxy: each hop's path and accept-encoding must still be the
+  // hop's own when ProxyAgent / EnvHttpProxyAgent (or the Rust proxy) carry the request.
+  async function redirectThroughProxy(opts, vars) {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push([req.url, req.headers['accept-encoding']]);
+      if (req.url === '/') { res.writeHead(302, { Location: '/final?' }); return res.end(); }
+      res.end('ok');
+    });
+    proxy = await stubProxy.start();
+    const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port), protocol: 'http' };
+    expect(await outcome({ resources: [`http://localhost:${port}/`], ...opts(proxyObj) }, { vars: vars(proxy.url) })).to.equal('resolved');
+    expect(proxy.requests.slice(0, 2).map((r) => r.line)).to.deep.equal([`HEAD http://localhost:${port}/`, `HEAD http://localhost:${port}/final?`]);
+    expect(seen.slice(0, 2)).to.deep.equal([['/', HTTP_ENC], ['/final?', HTTP_ENC]]);
+  }
+
+  it('should keep the empty query and accept-encoding on a redirect hop through the proxy option', async function () {
+    await redirectThroughProxy((proxyObj) => ({ proxy: proxyObj }), () => ({}));
+  });
+
+  it('should keep the empty query and accept-encoding on a redirect hop through HTTP_PROXY', async function () {
+    await redirectThroughProxy(() => ({}), (url) => ({ HTTP_PROXY: url, http_proxy: url }));
+  });
+
   it('should fail an endless redirect chain even when validateStatus accepts 3xx', async function () {
     let hop = 0;
     const port = await httpTarget((req, res) => {
