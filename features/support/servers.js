@@ -8,7 +8,7 @@ const https = require('https');
 const net = require('net');
 const path = require('path');
 const tlsFixture = require('../../test/helpers/tls-fixture');
-const { getFreePort, listening } = require('../../test/helpers/cli-conformance');
+const { getFreePort, listening, listenOnBadPort } = require('../../test/helpers/cli-conformance');
 
 let pipes = 0;
 // Windows has no unix domain sockets; Node listens on a named pipe there instead
@@ -65,48 +65,55 @@ const answering = (status) => (req, res) => {
   res.end();
 };
 
-// listens on a loopback port (ephemeral by default); keepAlive 1ms so close() never waits on a client
-async function start(server, extra = {}, port = 0) {
+// listens on an ephemeral loopback port; keepAlive 1ms so close() never waits on a client
+async function start(server, extra = {}) {
   server.keepAliveTimeout = 1;
-  await listening(server, port, '127.0.0.1');
+  await listening(server, 0, '127.0.0.1');
   return { port: server.address().port, close: closer(server), ...extra };
 }
 
 const httpServer = (status) => start(http.createServer(answering(status)));
 
-// records each request's method, url and headers (headers, auth)
+// records each request's method, url and headers (headers, auth); `status` may be a
+// function of the request
 function recordingHttpServer(status) {
   const requests = [];
   const handler = (req, res) => {
     requests.push({ method: req.method, url: req.url, headers: req.headers });
-    answering(status)(req, res);
+    answering(typeof status === 'function' ? status(req) : status)(req, res);
   };
   return start(http.createServer(handler), { requests });
 }
 
-// `/` answers 302 to `/ok`, which answers 200 (followRedirect)
-function redirectingHttpServer() {
+// `/` answers 302 to `location`, anything else answers 200 (followRedirect), recording requests
+function redirectingHttpServer(location = '/ok') {
+  const requests = [];
   const handler = (req, res) => {
-    if (req.url === '/ok') return answering(200)(req, res);
-    res.writeHead(302, { location: '/ok' });
+    requests.push({ method: req.method, url: req.url, headers: req.headers });
+    if (req.url !== '/') return answering(200)(req, res);
+    res.writeHead(302, { location });
+    res.end();
+  };
+  return start(http.createServer(handler), { requests });
+}
+
+// `/`, `/1`, ... redirect to the next until `/<hops>`, which answers 200
+function redirectChainHttpServer(hops) {
+  const handler = (req, res) => {
+    const hop = Number(req.url.slice(1)) || 0;
+    if (hop === hops) return answering(200)(req, res);
+    res.writeHead(302, { location: `/${hop + 1}` });
     res.end();
   };
   return start(http.createServer(handler));
 }
 
-// Unprivileged ports on the WHATWG Fetch bad-port list, which undici fetch refuses (#104).
-// The contract allows no skipped scenario, so the first free one is used.
-const FETCH_BAD_PORTS = [6000, 6665, 6666, 6667, 6668, 6669, 6697, 10080, 5060, 5061, 6566, 4190, 4045, 3659];
-
+// on the first free Fetch bad-list port (#104): the contract allows no skipped scenario
 async function badPortHttpServer(status) {
-  for (const port of FETCH_BAD_PORTS) {
-    try {
-      return await start(http.createServer(answering(status)), {}, port);
-    } catch (err) {
-      if (err.code !== 'EADDRINUSE' && err.code !== 'EACCES') throw err;
-    }
-  }
-  throw new Error(`every Fetch bad-list port is taken: ${FETCH_BAD_PORTS.join(', ')}`);
+  const server = http.createServer(answering(status));
+  server.keepAliveTimeout = 1;
+  await listenOnBadPort(server);
+  return { port: server.address().port, close: closer(server) };
 }
 
 // accepts requests and never answers (httpTimeout); close() drops the held connections
@@ -171,6 +178,7 @@ module.exports = {
   badPortHttpServer,
   recordingHttpServer,
   redirectingHttpServer,
+  redirectChainHttpServer,
   silentHttpServer,
   slowHttpServer,
   httpsServer,

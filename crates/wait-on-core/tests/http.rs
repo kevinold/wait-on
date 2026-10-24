@@ -73,3 +73,18 @@ async fn http_reverse_times_out_on_200() {
     let line = result_line(&url, 200, "OK", true);
     times_out(http_with(&url, |_| {}), true, &line).await;
 }
+
+// The JS engine's loop delta, kept on Rust: undici compares hops as pathname + search, so a
+// redirect from a path to the same path plus an empty `?` is a loop and never requested.
+#[tokio::test(start_paused = true)]
+async fn http_forward_redirect_to_the_same_path_with_an_empty_query_is_a_loop() {
+    let srv = serve(Some(redirect_to("/selfq?")), None);
+    let url = format!("{}/selfq", srv.url);
+    let line = format!("  HTTP(S) error for {url} Redirect loop detected");
+    times_out(http_with(&url, |_| {}), false, &line).await;
+    assert!(
+        text(&srv.heads)
+            .iter()
+            .all(|h| h.starts_with("GET /selfq "))
+    );
+}

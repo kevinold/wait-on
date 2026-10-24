@@ -17,10 +17,10 @@ Given('the installed package has no addon for this host', function () {
   this.vars.addon = path.join(this.project, 'node_modules', 'wait-on', 'prebuilds', this.hostDir, 'wait-on.node');
 });
 
-// starts an http server and registers `http://127.0.0.1:<port>/` as the next resource
-async function serveHttp(world, start) {
+// starts an http server and registers `http://127.0.0.1:<port><urlPath>` as the next resource
+async function serveHttp(world, start, urlPath = '/') {
   world.server = await world.serve(start);
-  world.addResource(`http://127.0.0.1:${world.server.port}/`, { port: world.server.port });
+  world.addResource(`http://127.0.0.1:${world.server.port}${urlPath}`, { port: world.server.port });
 }
 
 Given('a TCP server that starts listening after {int}ms', async function (ms) {
@@ -40,8 +40,24 @@ Given('an HTTP server answering {int} that records requests', function (status) 
   return serveHttp(this, () => servers.recordingHttpServer(status));
 });
 
+Given('an HTTP server answering {int} that records requests to {string}', function (status, urlPath) {
+  return serveHttp(this, () => servers.recordingHttpServer(status), urlPath);
+});
+
 Given('an HTTP server redirecting to a page answering 200', function () {
-  return serveHttp(this, servers.redirectingHttpServer);
+  return serveHttp(this, () => servers.redirectingHttpServer());
+});
+
+Given('an HTTP server redirecting to {string}', function (location) {
+  return serveHttp(this, () => servers.redirectingHttpServer(location));
+});
+
+Given('an HTTP server redirecting {int} times before answering 200', function (hops) {
+  return serveHttp(this, () => servers.redirectChainHttpServer(hops));
+});
+
+Given('an HTTP server answering 406 to a request without accept-encoding', function () {
+  return serveHttp(this, () => servers.recordingHttpServer((req) => (req.headers['accept-encoding'] ? 200 : 406)));
 });
 
 Given('an HTTP server that never answers', function () {
@@ -52,6 +68,17 @@ Then('the server saw the header {string} as {string}', function (name, value) {
   const { requests } = this.server;
   assert.ok(requests.length > 0, 'the server saw no request');
   for (const { headers } of requests) assert.strictEqual(headers[name], value);
+});
+
+Then('the server saw the request path {string}', function (url) {
+  const { requests } = this.server;
+  assert.ok(requests.length > 0, 'the server saw no request');
+  for (const request of requests) assert.strictEqual(request.url, url);
+});
+
+Then('the redirect was followed to the path {string}', function (url) {
+  const urls = this.server.requests.map((request) => request.url);
+  assert.deepStrictEqual(urls.slice(0, 2), ['/', url]);
 });
 
 // proves a direct path: the origin itself answered, not only that the proxy saw nothing

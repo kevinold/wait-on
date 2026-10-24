@@ -14,6 +14,7 @@ const path = require('path');
 const tlsFixture = require('./helpers/tls-fixture');
 const stubProxy = require('./helpers/stub-proxy');
 const { withEnv } = require('./helpers/engine-env');
+const { FETCH_BAD_PORTS, listenOnBadPort } = require('./helpers/cli-conformance');
 
 const mocha = require('mocha');
 const describe = mocha.describe;
@@ -564,7 +565,6 @@ describe('plain http auth, headers and validateStatus parity', function () {
 // must reach them.
 describe('Fetch bad-list ports (#104)', function () {
   this.timeout(6000);
-  const BAD_PORT = 6000;
   let fx;
   let proxy;
 
@@ -581,18 +581,11 @@ describe('Fetch bad-list ports (#104)', function () {
     await new Promise((resolve) => closeServers(resolve));
   });
 
-  // Listen on the bad-list port; skip (not fail) when another process holds it.
-  async function listenBadPort(ctx, server, host = '127.0.0.1') {
-    try {
-      await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(BAD_PORT, host, resolve);
-      });
-    } catch (err) {
-      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') ctx.skip();
-      throw err;
-    }
-    servers.push(server);
+  // Listen on the first free bad-list port; badUrl follows it.
+  let badPort;
+  async function listenBadPort(server, host) {
+    servers.push(await listenOnBadPort(server, host));
+    badPort = server.address().port;
     return server;
   }
   const countingTarget = (handler = (req, res) => res.end('ok')) => {
@@ -600,30 +593,30 @@ describe('Fetch bad-list ports (#104)', function () {
     server.hits = 0;
     return server;
   };
-  const badUrl = `http://127.0.0.1:${BAD_PORT}/`;
+  const badUrl = () => `http://127.0.0.1:${badPort}/`;
 
   it('should succeed when an http HEAD resource listens on a bad-list port', async function () {
-    const target = await listenBadPort(this, countingTarget());
-    expect(await outcome({ resources: [badUrl] })).to.equal('resolved');
+    const target = await listenBadPort(countingTarget());
+    expect(await outcome({ resources: [badUrl()] })).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should succeed when an http-get resource listens on a bad-list port', async function () {
-    const target = await listenBadPort(this, countingTarget());
-    expect(await outcome({ resources: [`http-get://127.0.0.1:${BAD_PORT}/`] })).to.equal('resolved');
+    const target = await listenBadPort(countingTarget());
+    expect(await outcome({ resources: [`http-get://127.0.0.1:${badPort}/`] })).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should succeed when an https resource with ca and strictSSL listens on a bad-list port', async function () {
     if (!fx) this.skip(); // openssl not available
-    await listenBadPort(this, https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end('ok')), 'localhost');
-    expect(await outcome({ resources: [`https://localhost:${BAD_PORT}/`], strictSSL: true, ca: fx.cert })).to.equal('resolved');
+    await listenBadPort(https.createServer({ key: fx.key, cert: fx.cert }, (req, res) => res.end('ok')), 'localhost');
+    expect(await outcome({ resources: [`https://localhost:${badPort}/`], strictSSL: true, ca: fx.cert })).to.equal('resolved');
   });
 
   it('should follow a redirect onto a bad-list port when followRedirect is true', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     const port = await httpTarget((req, res) => {
-      res.writeHead(302, { Location: badUrl });
+      res.writeHead(302, { Location: badUrl() });
       res.end();
     });
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
@@ -631,29 +624,29 @@ describe('Fetch bad-list ports (#104)', function () {
   });
 
   it('should hand a 3xx from a bad-list port to validateStatus when followRedirect is false', async function () {
-    const target = await listenBadPort(this, countingTarget((req, res) => {
+    const target = await listenBadPort(countingTarget((req, res) => {
       res.writeHead(302, { Location: '/elsewhere' });
       res.end();
     }));
-    const opts = { resources: [badUrl], followRedirect: false, validateStatus: (status) => status === 302 };
+    const opts = { resources: [badUrl()], followRedirect: false, validateStatus: (status) => status === 302 };
     expect(await outcome(opts)).to.equal('resolved');
     expect(target.hits).to.be.above(0);
   });
 
   it('should route a bad-list port target through an explicit proxy object', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     proxy = await stubProxy.start();
     const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port), protocol: 'http' };
-    expect(await outcome({ resources: [badUrl], proxy: proxyObj })).to.equal('resolved');
+    expect(await outcome({ resources: [badUrl()], proxy: proxyObj })).to.equal('resolved');
     expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
     expect(target.hits).to.be.above(0);
   });
 
   it('should route a bad-list port target through HTTP_PROXY from the env', async function () {
-    const target = await listenBadPort(this, countingTarget());
+    const target = await listenBadPort(countingTarget());
     proxy = await stubProxy.start();
     const vars = { HTTP_PROXY: proxy.url, http_proxy: proxy.url };
-    expect(await outcome({ resources: [badUrl] }, { vars })).to.equal('resolved');
+    expect(await outcome({ resources: [badUrl()] }, { vars })).to.equal('resolved');
     expect(proxy.requests.length + proxy.connects.length).to.be.above(0);
     expect(target.hits).to.be.above(0);
   });
@@ -664,17 +657,181 @@ describe('Fetch bad-list ports (#104)', function () {
     expect(await outcome({ resources: [`http://user:pass@localhost:${port}/`], timeout: 600 }, { routed: false })).to.match(/Timed out/);
   });
 
-  it('should send default accept and user-agent headers, letting caller headers win', async function () {
+  it('should send default accept, accept-language and user-agent headers, letting caller headers win', async function () {
     const seen = [];
     const port = await httpTarget((req, res) => { seen.push(req.headers); res.end('ok'); });
     expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
-    expect(seen[0]).to.include({ accept: '*/*' });
+    expect(seen[0]).to.include({ accept: '*/*', 'accept-language': '*' });
     // ponytail: the Rust engine (reqwest) sends no default user-agent; JS keeps fetch's
     if (!isRust) expect(seen[0]).to.include({ 'user-agent': 'undici' });
     seen.length = 0;
-    const headers = { 'User-Agent': 'probe', Accept: 'text/plain' };
+    const headers = { 'User-Agent': 'probe', Accept: 'text/plain', 'Accept-Language': 'en' };
     expect(await outcome({ resources: [`http://localhost:${port}/a`], headers })).to.equal('resolved');
-    expect(seen[0]).to.include({ accept: 'text/plain', 'user-agent': 'probe' });
+    expect(seen[0]).to.include({ accept: 'text/plain', 'accept-language': 'en', 'user-agent': 'probe' });
+  });
+
+  // fetch sent accept-encoding per hop by that hop's scheme: `br, gzip, deflate, zstd` over
+  // https, `gzip, deflate` otherwise, `identity` under a Range header. A server that
+  // answers 406 without it must still resolve.
+  const HTTP_ENC = 'gzip, deflate';
+  const HTTPS_ENC = 'br, gzip, deflate, zstd';
+  function encodingServer(scheme, seen, redirectTo) {
+    const handler = (req, res) => {
+      seen.push(req.headers['accept-encoding']);
+      if (redirectTo && req.url === '/') { res.writeHead(302, { Location: redirectTo() }); return res.end(); }
+      res.statusCode = req.headers['accept-encoding'] ? 200 : 406;
+      res.end();
+    };
+    const server = scheme === 'https' ? https.createServer({ key: fx.key, cert: fx.cert }, handler) : http.createServer(handler);
+    servers.push(server);
+    return new Promise((resolve) => server.listen(0, 'localhost', () => resolve(server.address().port)));
+  }
+  // http -> https: the https server, then the http one redirecting to it
+  async function httpToHttps(seen) {
+    const ports = { https: await encodingServer('https', seen.https) };
+    ports.http = await encodingServer('http', seen.http, () => `https://localhost:${ports.https}/ok`);
+    return ports;
+  }
+
+  for (const [prefix, scheme, expected] of [
+    ['http', 'http', HTTP_ENC],
+    ['http-get', 'http', HTTP_ENC],
+    ['https', 'https', HTTPS_ENC],
+    ['https-get', 'https', HTTPS_ENC]
+  ]) {
+    it(`should send accept-encoding ${expected} for ${prefix} to a server that returns 406 without it`, async function () {
+      if (!fx) this.skip(); // openssl not available
+      const seen = [];
+      const port = await encodingServer(scheme, seen);
+      expect(await outcome({ resources: [`${prefix}://localhost:${port}/`] })).to.equal('resolved');
+      expect(seen[0]).to.equal(expected);
+    });
+  }
+
+  it('should switch accept-encoding by scheme on http->https and https->http redirect hops', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = {};
+    ports.https = await encodingServer('https', seen.https, () => `http://localhost:${ports.http}/ok`);
+    ports.http = await encodingServer('http', seen.http, () => `https://localhost:${ports.https}/ok`);
+    expect(await outcome({ resources: [`http://localhost:${ports.http}/`] })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal([HTTP_ENC, HTTPS_ENC]);
+    seen.http.length = seen.https.length = 0;
+    expect(await outcome({ resources: [`https://localhost:${ports.https}/`] })).to.equal('resolved');
+    expect([seen.https[0], seen.http[0]]).to.deep.equal([HTTPS_ENC, HTTP_ENC]);
+  });
+
+  it('should send the caller accept-encoding on every redirect hop', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = await httpToHttps(seen);
+    const opts = { resources: [`http://localhost:${ports.http}/`], headers: { 'Accept-Encoding': 'br' } };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['br', 'br']);
+  });
+
+  it('should send accept-encoding by scheme when followRedirect is false', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const httpPort = await encodingServer('http', seen.http);
+    const httpsPort = await encodingServer('https', seen.https);
+    expect(await outcome({ resources: [`http://localhost:${httpPort}/`], followRedirect: false })).to.equal('resolved');
+    expect(await outcome({ resources: [`https://localhost:${httpsPort}/`], followRedirect: false })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal([HTTP_ENC, HTTPS_ENC]);
+  });
+
+  it('should send accept-encoding identity under a Range header over http and https', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const httpPort = await encodingServer('http', seen.http);
+    const httpsPort = await encodingServer('https', seen.https);
+    const headers = { Range: 'bytes=0-' };
+    expect(await outcome({ resources: [`http://localhost:${httpPort}/`], headers })).to.equal('resolved');
+    expect(await outcome({ resources: [`https://localhost:${httpsPort}/`], headers })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['identity', 'identity']);
+  });
+
+  it('should send accept-encoding identity under a Range header on every redirect hop', async function () {
+    if (!fx) this.skip(); // openssl not available
+    const seen = { http: [], https: [] };
+    const ports = await httpToHttps(seen);
+    expect(await outcome({ resources: [`http://localhost:${ports.http}/`], headers: { Range: 'bytes=0-' } })).to.equal('resolved');
+    expect([seen.http[0], seen.https[0]]).to.deep.equal(['identity', 'identity']);
+  });
+
+  it('should send the request path with an empty query, a query, and no fragment as fetch did', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.end('ok'); });
+    for (const suffix of ['/health?', '/health?a=1', '/health?a=1#frag', '/health#frag']) {
+      expect(await outcome({ resources: [`http://localhost:${port}${suffix}`] })).to.equal('resolved');
+    }
+    expect(seen).to.deep.equal(['/health?', '/health?a=1', '/health?a=1', '/health']);
+  });
+
+  // fetch requested a redirect Location's path and query as written too: an empty `?` is
+  // kept and a #fragment dropped. undici's redirect interceptor alone would drop the `?`.
+  for (const [location, expected] of [['/final?', '/final?'], ['/final?#frag', '/final?'], ['/final?a=1', '/final?a=1'], ['/final#frag', '/final']]) {
+    it(`should request ${expected} after a redirect to ${location}`, async function () {
+      const seen = [];
+      const port = await httpTarget((req, res) => {
+        seen.push(req.url);
+        if (req.url === '/') { res.writeHead(302, { Location: location }); return res.end(); }
+        res.end('ok');
+      });
+      expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+      expect(seen.slice(0, 2)).to.deep.equal(['/', expected]);
+    });
+  }
+
+  it('should keep an empty query on a cross-origin redirect hop', async function () {
+    const seen = [];
+    const other = await httpTarget((req, res) => { seen.push(req.url); res.end('ok'); });
+    const port = await httpTarget((req, res) => {
+      res.writeHead(302, { Location: `http://localhost:${other}/final?` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(seen[0]).to.equal('/final?');
+  });
+
+  // The path saved from one hop's Location must only be sent on the hop it was for: after
+  // A /first? redirects cross-origin to B /second, B must get /second, not /first?.
+  it('should not reuse a saved empty-query path on a later cross-origin hop', async function () {
+    const seen = { a: [], b: [] };
+    const b = await httpTarget((req, res) => { seen.b.push(req.url); res.end('ok'); });
+    const a = await httpTarget((req, res) => {
+      seen.a.push(req.url);
+      if (req.url === '/') { res.writeHead(302, { Location: '/first?' }); return res.end(); }
+      res.writeHead(302, { Location: `http://localhost:${b}/second` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${a}/`] })).to.equal('resolved');
+    expect(seen.a.slice(0, 2)).to.deep.equal(['/', '/first?']);
+    expect(seen.b[0]).to.equal('/second');
+  });
+
+  // A redirect hop through a proxy: each hop's path and accept-encoding must still be the
+  // hop's own when ProxyAgent / EnvHttpProxyAgent (or the Rust proxy) carry the request.
+  async function redirectThroughProxy(opts, vars) {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push([req.url, req.headers['accept-encoding']]);
+      if (req.url === '/') { res.writeHead(302, { Location: '/final?' }); return res.end(); }
+      res.end('ok');
+    });
+    proxy = await stubProxy.start();
+    const proxyObj = { host: '127.0.0.1', port: Number(new URL(proxy.url).port), protocol: 'http' };
+    expect(await outcome({ resources: [`http://localhost:${port}/`], ...opts(proxyObj) }, { vars: vars(proxy.url) })).to.equal('resolved');
+    expect(proxy.requests.slice(0, 2).map((r) => r.line)).to.deep.equal([`HEAD http://localhost:${port}/`, `HEAD http://localhost:${port}/final?`]);
+    expect(seen.slice(0, 2)).to.deep.equal([['/', HTTP_ENC], ['/final?', HTTP_ENC]]);
+  }
+
+  it('should keep the empty query and accept-encoding on a redirect hop through the proxy option', async function () {
+    await redirectThroughProxy((proxyObj) => ({ proxy: proxyObj }), () => ({}));
+  });
+
+  it('should keep the empty query and accept-encoding on a redirect hop through HTTP_PROXY', async function () {
+    await redirectThroughProxy(() => ({}), (url) => ({ HTTP_PROXY: url, http_proxy: url }));
   });
 
   it('should fail an endless redirect chain even when validateStatus accepts 3xx', async function () {
@@ -685,6 +842,99 @@ describe('Fetch bad-list ports (#104)', function () {
     });
     const opts = { resources: [`http://localhost:${port}/`], validateStatus: (status) => status < 400, timeout: 800 };
     expect(await outcome(opts)).to.match(/Timed out/);
+  });
+
+  // 9.5.1 (follow-redirects maxRedirects 21) followed 21 redirects and failed on a 22nd.
+  const redirectChain = (hops) => httpTarget((req, res) => {
+    const hop = Number(req.url.slice(1)) || 0;
+    if (hop === hops) return res.end('ok');
+    res.writeHead(302, { Location: `/${hop + 1}` });
+    res.end();
+  });
+
+  for (const hops of [20, 21]) {
+    it(`should succeed when the final 2xx comes after exactly ${hops} redirects`, async function () {
+      const port = await redirectChain(hops);
+      expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    });
+  }
+
+  it('should fail when the final 2xx comes after 22 redirects', async function () {
+    const port = await redirectChain(22);
+    expect(await outcome({ resources: [`http://localhost:${port}/`], timeout: 800 })).to.match(/Timed out/);
+  });
+
+  // undici's redirect handler follows 300 with a Location, like 301/302/303/307/308.
+  it('should follow a 300 with a Location', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/') { res.writeHead(300, { Location: '/ok' }); return res.end(); }
+      res.end('ok');
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`] })).to.equal('resolved');
+    expect(seen.slice(0, 2)).to.deep.equal(['/', '/ok']);
+  });
+
+  it('should hand a 3xx without Location to validateStatus instead of following it', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.writeHead(302); res.end(); });
+    const opts = { resources: [`http://localhost:${port}/a?`], validateStatus: (status) => status === 302 };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(seen).to.deep.equal(['/a?']);
+  });
+
+  it('should hand a 3xx with an empty Location to validateStatus instead of following it', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => { seen.push(req.url); res.writeHead(302, { Location: '' }); res.end(); });
+    const opts = { resources: [`http://localhost:${port}/a`], validateStatus: (status) => status === 302 };
+    expect(await outcome(opts)).to.equal('resolved');
+    expect(seen).to.deep.equal(['/a']);
+  });
+
+  // Known delta from fetch and 9.x: undici's loop check compares pathname + search, so a
+  // redirect to the same path plus an empty `?` is a loop and is never requested.
+  it('should stop a redirect to the same path plus an empty query as a loop', async function () {
+    const seen = [];
+    const port = await httpTarget((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/selfq') { res.writeHead(302, { Location: '/selfq?' }); return res.end(); }
+      res.end('ok');
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/selfq`], timeout: 600 })).to.match(/Timed out/);
+    expect(seen).to.include('/selfq').and.not.include('/selfq?');
+  });
+
+  // fetch cancelled a rejected body at once; waiting for a non-2xx body that never ends
+  // would hold the only poll slot (simultaneous: 1, no httpTimeout) until the timeout.
+  it('should succeed when an earlier non-2xx GET response never ends its body', async function () {
+    const healthyAt = Date.now() + 500;
+    let stalled = 0;
+    const port = await httpTarget((req, res) => {
+      if (Date.now() >= healthyAt) return res.end('ok');
+      res.writeHead(503);
+      res.write('x'); // never ended
+      stalled++;
+    });
+    expect(await outcome({ resources: [`http-get://localhost:${port}/`], simultaneous: 1 })).to.equal('resolved');
+    expect(stalled).to.be.above(0);
+  });
+
+  // fetch dropped Authorization on a cross-origin redirect; the redirect interceptor must too.
+  it('should not send opts.auth to a different origin after a redirect', async function () {
+    const seen = {};
+    const other = await httpTarget((req, res) => {
+      seen.other = req.headers.authorization;
+      res.end('ok');
+    });
+    const port = await httpTarget((req, res) => {
+      seen.first = req.headers.authorization;
+      res.writeHead(302, { Location: `http://localhost:${other}/` });
+      res.end();
+    });
+    expect(await outcome({ resources: [`http://localhost:${port}/`], auth: { username: 'u', password: 'p' } })).to.equal('resolved');
+    expect(seen.first).to.equal('Basic ' + Buffer.from('u:p').toString('base64'));
+    expect(seen).to.have.property('other', undefined);
   });
 });
 
@@ -716,6 +966,27 @@ describe('test helpers: tls fixture and stub proxy', function () {
     it('should encrypt the key so it opens only with the passphrase', function () {
       expect(crypto.createPrivateKey({ key: fx.encryptedKey, passphrase: fx.passphrase }).asymmetricKeyType).to.equal('ec');
       expect(() => crypto.createPrivateKey(fx.encryptedKey)).to.throw();
+    });
+  });
+
+  describe('first free bad-list port', function () {
+    afterEach(function (done) {
+      closeServers(done);
+    });
+
+    it('should listen on a later bad-list port when the first free one is held', async function () {
+      const a = await listenOnBadPort(http.createServer());
+      servers.push(a);
+      const b = await listenOnBadPort(http.createServer());
+      servers.push(b);
+      expect(FETCH_BAD_PORTS).to.include(b.address().port);
+      expect(b.address().port).to.not.equal(a.address().port);
+    });
+
+    it('should rethrow a listen error that is neither EADDRINUSE nor EACCES', async function () {
+      let err;
+      await listenOnBadPort(http.createServer(), '192.0.2.1').catch((e) => (err = e));
+      expect(err).to.have.property('code', 'EADDRNOTAVAIL');
     });
   });
 
