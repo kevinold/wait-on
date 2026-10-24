@@ -1,6 +1,7 @@
 @api
 Feature: HTTP request options
-  headers and auth are sent with every check, redirects are followed unless
+  headers and auth are sent with every check, with fetch's default accept-encoding unless
+  the caller sets one; redirects are followed (21 of them, keeping an empty query) unless
   followRedirect is false, validateStatus replaces the 2xx rule, and httpTimeout fails a
   check whose response does not arrive in time. A port on the Fetch bad-port list (6000,
   6665-6669, 10080, ...) is reached like any other.
@@ -36,6 +37,26 @@ Feature: HTTP request options
     And the server saw the header "accept-language" as "*"
 
   @kind:good
+  Scenario: the default accept-encoding is sent, so a server that requires one answers
+    Given an HTTP server answering 406 to a request without accept-encoding
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
+    And the server saw the header "accept-encoding" as "gzip, deflate"
+
+  @kind:good
+  Scenario: a caller accept-encoding replaces the default
+    Given an HTTP server answering 406 to a request without accept-encoding
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000, "headers": { "Accept-Encoding": "br" } }
+      """
+    Then the wait resolves
+    And the server saw the header "accept-encoding" as "br"
+
+  @kind:good
   Scenario: auth is sent as a Basic authorization header
     Given an HTTP server answering 200 that records requests
     When the consumer calls waitOn with:
@@ -53,6 +74,37 @@ Feature: HTTP request options
       { "resources": ["<resource 1>"], "timeout": 2000 }
       """
     Then the wait resolves
+
+  @kind:good
+  Scenario: a redirect to a path with an empty query keeps the query
+    Given an HTTP server redirecting to "/final?"
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
+    And the redirect was followed to the path "/final?"
+
+  @kind:good
+  Scenario: a 2xx after 21 redirects is reached
+    Given an HTTP server redirecting 21 times before answering 200
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 2000 }
+      """
+    Then the wait resolves
+
+  @kind:bad
+  Scenario: a 22nd redirect fails the check
+    Given an HTTP server redirecting 22 times before answering 200
+    When the consumer calls waitOn with:
+      """
+      { "resources": ["<resource 1>"], "timeout": 600, "interval": 100 }
+      """
+    Then the wait rejects with an Error:
+      """
+      Timed out waiting for: <resource 1>
+      """
 
   @kind:bad
   Scenario: followRedirect false treats the redirect as the answer

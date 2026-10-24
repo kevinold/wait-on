@@ -74,21 +74,35 @@ async function start(server, extra = {}) {
 
 const httpServer = (status) => start(http.createServer(answering(status)));
 
-// records each request's method, url and headers (headers, auth)
+// records each request's method, url and headers (headers, auth); `status` may be a
+// function of the request
 function recordingHttpServer(status) {
   const requests = [];
   const handler = (req, res) => {
     requests.push({ method: req.method, url: req.url, headers: req.headers });
-    answering(status)(req, res);
+    answering(typeof status === 'function' ? status(req) : status)(req, res);
   };
   return start(http.createServer(handler), { requests });
 }
 
-// `/` answers 302 to `/ok`, which answers 200 (followRedirect)
-function redirectingHttpServer() {
+// `/` answers 302 to `location`, anything else answers 200 (followRedirect), recording requests
+function redirectingHttpServer(location = '/ok') {
+  const requests = [];
   const handler = (req, res) => {
-    if (req.url === '/ok') return answering(200)(req, res);
-    res.writeHead(302, { location: '/ok' });
+    requests.push({ method: req.method, url: req.url, headers: req.headers });
+    if (req.url !== '/') return answering(200)(req, res);
+    res.writeHead(302, { location });
+    res.end();
+  };
+  return start(http.createServer(handler), { requests });
+}
+
+// `/`, `/1`, ... redirect to the next until `/<hops>`, which answers 200
+function redirectChainHttpServer(hops) {
+  const handler = (req, res) => {
+    const hop = Number(req.url.slice(1)) || 0;
+    if (hop === hops) return answering(200)(req, res);
+    res.writeHead(302, { location: `/${hop + 1}` });
     res.end();
   };
   return start(http.createServer(handler));
@@ -164,6 +178,7 @@ module.exports = {
   badPortHttpServer,
   recordingHttpServer,
   redirectingHttpServer,
+  redirectChainHttpServer,
   silentHttpServer,
   slowHttpServer,
   httpsServer,

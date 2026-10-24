@@ -45,7 +45,19 @@ Given('an HTTP server answering {int} that records requests to {string}', functi
 });
 
 Given('an HTTP server redirecting to a page answering 200', function () {
-  return serveHttp(this, servers.redirectingHttpServer);
+  return serveHttp(this, () => servers.redirectingHttpServer());
+});
+
+Given('an HTTP server redirecting to {string}', function (location) {
+  return serveHttp(this, () => servers.redirectingHttpServer(location));
+});
+
+Given('an HTTP server redirecting {int} times before answering 200', function (hops) {
+  return serveHttp(this, () => servers.redirectChainHttpServer(hops));
+});
+
+Given('an HTTP server answering 406 to a request without accept-encoding', function () {
+  return serveHttp(this, () => servers.recordingHttpServer((req) => (req.headers['accept-encoding'] ? 200 : 406)));
 });
 
 Given('an HTTP server that never answers', function () {
@@ -62,6 +74,11 @@ Then('the server saw the request path {string}', function (url) {
   const { requests } = this.server;
   assert.ok(requests.length > 0, 'the server saw no request');
   for (const request of requests) assert.strictEqual(request.url, url);
+});
+
+Then('the redirect was followed to the path {string}', function (url) {
+  const urls = this.server.requests.map((request) => request.url);
+  assert.deepStrictEqual(urls.slice(0, 2), ['/', url]);
 });
 
 // proves a direct path: the origin itself answered, not only that the proxy saw nothing
